@@ -272,7 +272,25 @@ echo peer on the second host and passing its address instead of spawning.
     without curl headers — Linux uses librdkafka's mklove configure,
     which probes and disables what's missing.
   `scripts/table.py` prints the full comparison from `results/`.
-- **M4 — Aeron**, IPC + UDP, quarantined because of the FFI risk.
+- **M4 — Aeron. Done 2026-08-31.** rusteron 0.2.5 (FFI over vendored
+  Aeron C), statically linked after the predicted FFI papercuts arrived on
+  schedule: the default build dynamically links a dylib with no rpath
+  (fixed by the `static` feature); primes needed a user-space cmake ≥3.30
+  (`~/opt/cmake`, Aeron's CMakeLists demands it) and a user-space static
+  libuuid (`~/opt/uuid`, built from util-linux; found via
+  `PKG_CONFIG_PATH`) — build there with
+  `CMAKE=~/opt/cmake/bin/cmake PKG_CONFIG_PATH=~/opt/uuid/lib/pkgconfig`.
+  Media driver embedded in the echo child, SHARED threading + spin idle
+  (Aeron's low-latency single-core profile — the one documented tuning).
+  Primes, pinned (2,4,6,12), 128B, zero drops:
+  **aeron-ipc p50 0.47–0.53µs** (between the raw ring and iceoryx2;
+  hypothesis band hit), **aeron-udp p50 4.2–5.0µs — as fast as raw UDP
+  sockets.** That second number is a finding: Aeron's reliability layer
+  costs ~nothing at the median because the spinning driver owns the
+  sockets and hands messages to the client over shared memory, amortizing
+  the syscall path the raw-socket backend pays per message. The tails are
+  where Aeron pays: p99 7–8µs on IPC vs iceoryx2's 0.94µs, with four hot
+  threads (parent 2, echo 1, driver 1) exactly filling the 4-core pin.
 - **M5 — the report.** Comparison doc + charts, generated from `results/`.
 - **M6 — cross-host on AWS.** Two EC2 boxes in a cluster placement group,
   the network-axis candidates re-measured over a real wire. See "Rigs".
