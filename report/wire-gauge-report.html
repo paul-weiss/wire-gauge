@@ -46,6 +46,9 @@ svg .value { fill: var(--text-secondary); font: 11px "IBM Plex Mono", monospace;
 .cands dt { font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 500; margin-top: 12px; }
 .cands dd { margin: 2px 0 0; font-size: 13.5px; color: var(--text-secondary); line-height: 1.5; }
 .cands code { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+.cands .links { font-size: 12px; white-space: nowrap; }
+.cands a { color: var(--series-1); text-decoration: none; }
+.cands a:hover, .cands a:focus-visible { text-decoration: underline; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: right; padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap;
@@ -78,17 +81,17 @@ Same harness, same machine, one echo process per run.</p>
 style over a file-backed shared mapping. The producer copies the payload and publishes an
 8-byte sequence stamp with a release store; the consumer busy-spins on the stamp it expects.
 Flow control is backpressure, never overwrite, so a slow consumer surfaces as send lag
-instead of silent loss. No dependencies; everything else is measured against this.</dd>
+instead of silent loss. No dependencies; everything else is measured against this. <span class="links"><a href="https://lmax-exchange.github.io/disruptor/disruptor.html" target="_blank" rel="noopener">design: LMAX Disruptor</a></span></dd>
 <dt>aeron-ipc</dt><dd>Aeron's same-host mode: publications write to shared-memory log
 buffers managed by its media driver (here embedded in the echo process, SHARED threading,
 spin idle — Aeron's published low-latency single-core profile). Identical API to aeron-udp,
 which is why Aeron is the hinge of this comparison. Via the rusteron FFI bindings over the
-vendored C client, statically linked.</dd>
+vendored C client, statically linked. <span class="links"><a href="https://aeron.io/docs/" target="_blank" rel="noopener">aeron.io docs</a> · <a href="https://github.com/aeron-io/aeron" target="_blank" rel="noopener">source</a> · <a href="https://github.com/gsrxyz/rusteron" target="_blank" rel="noopener">rusteron</a></span></dd>
 <dt>iceoryx2</dt><dd>Rust-native zero-copy publish/subscribe from the Eclipse iceoryx
 lineage — decentralized shared-memory services with discovery, loaned samples, and safe
 overflow, no daemon. Run in its plain <code>ipc</code> flavor (no locking), exact-size
 payload loans, a 4,096-sample subscriber buffer, busy-poll receive. The strongest
-“don't hand-roll it” IPC candidate.</dd>
+“don't hand-roll it” IPC candidate. <span class="links"><a href="https://iceoryx.io/" target="_blank" rel="noopener">docs</a> · <a href="https://github.com/eclipse-iceoryx/iceoryx2" target="_blank" rel="noopener">source</a></span></dd>
 </dl>
 </section>
 <section>
@@ -96,17 +99,17 @@ payload loans, a 4,096-sample subscriber buffer, busy-poll receive. The stronges
 <dl>
 <dt>uds</dt><dd>A Unix domain stream socket — the practical same-host default everyone
 actually ships. Blocking <code>std::net</code> calls, fixed-size framing (read exactly one
-message), no framework anywhere in the path.</dd>
+message), no framework anywhere in the path. <span class="links"><a href="https://man7.org/linux/man-pages/man7/unix.7.html" target="_blank" rel="noopener">unix(7)</a></span></dd>
 <dt>tcp</dt><dd>TCP over loopback with <code>TCP_NODELAY</code> on both ends (Nagle would
 batch 128-byte sends and measure the algorithm, not the wire). The reference point for
-“just use TCP.”</dd>
+“just use TCP.” <span class="links"><a href="https://man7.org/linux/man-pages/man7/tcp.7.html" target="_blank" rel="noopener">tcp(7)</a></span></dd>
 <dt>udp</dt><dd>Connected UDP unicast over loopback, one datagram per message, deliberately
 unreliable: nothing retransmits and the harness counts drops instead of hiding them. The
-floor of the network axis — the delta to aeron-udp prices Aeron's reliability layer.</dd>
+floor of the network axis — the delta to aeron-udp prices Aeron's reliability layer. <span class="links"><a href="https://man7.org/linux/man-pages/man7/udp.7.html" target="_blank" rel="noopener">udp(7)</a></span></dd>
 <dt>aeron-udp</dt><dd>Aeron over UDP unicast: the media driver owns the sockets, adds
 sequencing, flow control, and gap detection, and hands messages to the client through shared
 memory. Classed with kernel sockets because the wire is UDP loopback; the machinery on top
-is what's being priced.</dd>
+is what's being priced. <span class="links"><a href="https://aeron.io/docs/aeron/media-driver/" target="_blank" rel="noopener">transport docs</a></span></dd>
 </dl>
 </section>
 <section>
@@ -115,18 +118,18 @@ is what's being priced.</dd>
 <dt>nats</dt><dd>Core NATS: a lightweight broker doing fire-and-forget pub/sub — no
 persistence, no acknowledgments, a slow subscriber gets cut off. Driven through the official
 async client (<code>async-nats</code>) on a one-worker runtime, publish + flush per message
-so a send is on the wire before it returns.</dd>
+so a send is on the wire before it returns. <span class="links"><a href="https://docs.nats.io/" target="_blank" rel="noopener">docs</a> · <a href="https://docs.rs/async-nats" target="_blank" rel="noopener">async-nats</a></span></dd>
 <dt>jetstream</dt><dd>NATS's persistence layer: both directions run through file-backed
 streams and delivery comes from an ordered pull consumer, so the number measured is
 publish → stored → delivered. Publisher-acknowledgment latency is deliberately not in this
-round.</dd>
+round. <span class="links"><a href="https://docs.nats.io/nats-concepts/jetstream" target="_blank" rel="noopener">docs</a></span></dd>
 <dt>redis</dt><dd>Redis Streams: append with XADD, consume with blocking XREAD, one
 single-threaded server in between. Run at its best case — no AOF, no snapshots — and every
-XADD is a full client–server round trip, so over-offered load shows up as send lag.</dd>
+XADD is a full client–server round trip, so over-offered load shows up as send lag. <span class="links"><a href="https://redis.io/docs/latest/develop/data-types/streams/" target="_blank" rel="noopener">docs</a></span></dd>
 <dt>kafka</dt><dd>The durability and replay standard, as a single-node KRaft broker with one
 partition, driven by the official C client (librdkafka) at <code>linger.ms=0</code> and
 <code>acks=all</code>. Enqueueing is asynchronous — delivery failures become counted drops,
-and saturation becomes queueing delay the schedule-honest harness can see.</dd>
+and saturation becomes queueing delay the schedule-honest harness can see. <span class="links"><a href="https://kafka.apache.org/documentation/" target="_blank" rel="noopener">docs</a> · <a href="https://github.com/confluentinc/librdkafka" target="_blank" rel="noopener">librdkafka</a></span></dd>
 </dl>
 </section>
 </div>
