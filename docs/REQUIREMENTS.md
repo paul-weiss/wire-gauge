@@ -141,10 +141,13 @@ behavior these single numbers hide:
 
 Rust workspace, matching the house stack:
 
-- `crates/harness` — the `Transport` trait, scenario definitions, CO-free load
+- `crates/harness` — the transport traits, scenario definitions, CO-free load
   generator, HDR histogram recording, JSONL output. **No backend code here.**
 - One crate per backend (`crates/backend-*`), gated behind cargo features so
   heavy dependencies (rdkafka, zmq, Aeron FFI) stay out of the default build.
+  Exception, decided in M1: the three std-only raw-socket backends share
+  `crates/backend-sockets` — the per-backend rule exists to quarantine heavy
+  dependencies, and they have none.
 - A `runner` binary that takes (backend, scenario, config) and emits one JSONL
   record per run into `results/`.
 - Report generation from `results/` comes in M5; format decided then.
@@ -163,9 +166,16 @@ worth measuring.
 ## Milestones
 
 - **M0 — this document + workspace skeleton.** Done 2026-08-31.
-- **M1 — methodology proven.** Harness core + the two cheapest backends (UDS,
-  TCP loopback): scheduled load gen, HDR histograms, JSONL out. If the
-  methodology is wrong, find out here, where backends can't be blamed.
+- **M1 — methodology proven. Done 2026-08-31**, and it grew raw UDP since
+  that was nearly free once it joined round 1. Harness core (transport
+  traits, scheduled CO-free load gen, HDR latency + send-lag histograms,
+  JSONL records with machine metadata) + three backends: UDS, TCP loopback,
+  UDP unicast. The runner spawns itself as the echo peer, so every run is
+  genuinely cross-process. `scripts/smoke.sh` proves all three still measure.
+  Verified on the Mac: UDS p50 ≈ 28µs < UDP ≈ 38µs < TCP ≈ 42µs at 5k/s,
+  zero drops, and the generator holds schedule at 100k/s (send-lag p99
+  3.3µs). The send-lag histogram is the run-validity check: if it grows, the
+  generator — not the transport — is the bottleneck at that rate.
 - **M2 — the IPC axis.** Custom shm ring + iceoryx2.
 - **M3 — the brokered set.** NATS core, JetStream, Redis Streams, Kafka.
 - **M4 — Aeron**, IPC + UDP, quarantined because of the FFI risk.
