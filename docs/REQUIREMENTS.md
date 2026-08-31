@@ -244,7 +244,34 @@ echo peer on the second host and passing its address instead of spawning.
   3.7–4.2µs < udp 5.0–6.4µs < tcp 5.9–7.3µs at p50.
   Also proven en route: the macOS shm p999 of 1.15ms fell to 8.7µs once
   pinned on primes — the platform-honesty rule made measurable.
-- **M3 — the brokered set.** NATS core, JetStream, Redis Streams, Kafka.
+- **M3 — the brokered set. Done 2026-08-31.** NATS core, JetStream, Redis
+  Streams, Kafka, plus broker lifecycle in the runner (started before the
+  echo child on non-default ports, TCP-probed, killed and swept after —
+  natively on both machines; primes runs user-space installs, no sudo).
+  Primes, pinned to P-cores 0–15 (wider than the 4-core IPC pin so the
+  JVM broker isn't starved), 128B, zero drops everywhere:
+  **redis 24.7µs < nats 39.8µs < jetstream 55.1µs < kafka 114.4µs** at
+  p50/5k msgs/s. Findings worth keeping:
+  - **Kafka at 50k msgs/s collapses to p50 241ms** — every message
+    delivered, none dropped, but a single-partition `acks=all`
+    per-message pipeline can't sustain the rate, so the backlog's sojourn
+    time is the latency. The CO-honest schedule is what makes this
+    visible; send lag stays microseconds because enqueue is async.
+  - JetStream and Kafka beat their hypothesized bands by an order of
+    magnitude at low rate (55µs vs 0.5–2ms; 114µs vs 2–10ms): one node,
+    no replication, OS-async fsync. The public numbers the hypotheses
+    came from describe clusters. Single-box persistence is cheap;
+    replication is what costs — a thing M6 can measure.
+  - Redis beats NATS core here: one XADD round trip vs two brokered hops
+    plus the async-client `block_on`+flush boundary.
+  - Gotchas burned down: async-nats Subscriber::drop panics off-runtime;
+    Kafka 4 won't auto-create topics for consumers (admin-create + wait
+    for real partition assignment before the schedule starts); single-node
+    KRaft needs `offsets.topic.replication.factor=1` or the group
+    coordinator silently never exists; rdkafka's cmake build hard-fails
+    without curl headers — Linux uses librdkafka's mklove configure,
+    which probes and disables what's missing.
+  `scripts/table.py` prints the full comparison from `results/`.
 - **M4 — Aeron**, IPC + UDP, quarantined because of the FFI risk.
 - **M5 — the report.** Comparison doc + charts, generated from `results/`.
 - **M6 — cross-host on AWS.** Two EC2 boxes in a cluster placement group,

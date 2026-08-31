@@ -8,4 +8,14 @@ publish.workspace = true
 [dependencies]
 futures = "0.3.34"
 harness = { path = "../harness" }
+
+# Both build librdkafka from vendored source; the build system differs.
+# macOS: cmake (works out of the box against the SDK).
+# Linux: librdkafka's own mklove ./configure, which probes for optional
+# deps (curl, ssl, zstd) and *disables* what's missing — the cmake path
+# hard-fails on primes, where there is no sudo to install curl headers.
+[target.'cfg(target_os = "macos")'.dependencies]
 rdkafka = { version = "0.39.0", features = ["cmake-build"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+rdkafka = { version = "0.39.0" }
