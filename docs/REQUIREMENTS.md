@@ -102,8 +102,9 @@ Benchmark harnesses are easy; honest ones are not. These rules are the project:
    steady-state hides.
 4. **One-way latency across processes** is valid same-host because the
    monotonic clock is system-wide (`CLOCK_MONOTONIC_RAW` on Linux,
-   `mach_continuous_time` on macOS). Cross-host measurement needs PTP or RTT/2
-   and is out of scope for v1.
+   `mach_continuous_time` on macOS). Cross-host, RTT needs no clock sync at
+   all (send and measure on one host); one-way needs PTP and stays parked.
+   The cross-host campaign is scoped in "Rigs" below (M6).
 5. **Fairness rules:** identical payloads; identical allocation discipline; at
    most two configs per system (default + one documented tuning); never one
    system's client against another system's server; brokers run natively,
@@ -163,6 +164,53 @@ async (e.g. `async-nats`), and that gets said in the report; a tokio variant
 of a raw socket counts as the one "documented second config" if it's ever
 worth measuring.
 
+## Rigs — the machines this project needs
+
+Scoped 2026-08-31 on Paul's ask ("need networked machines"). Bottom line:
+**nothing to buy** — the same-host axis is covered by hardware that exists,
+and the cross-host axis rents two EC2 instances by the hour when its
+milestone arrives.
+
+**Same-host (rounds 1–2, all current milestones):**
+
+- **Mac** — dev loop; relative ordering only. Both toolchains kept on
+  current stable (1.98.0 as of 2026-08-31, Paul's standing instruction).
+- **primes** — the canonical rig (i9-13980HX, 62 GB, Linux 6.14,
+  performance governor; rustup installed 2026-08-31). Runs pin with
+  `taskset -c 2,4,6,12`: four distinct P-cores, HT siblings left idle,
+  cpu0 avoided because it catches kernel housekeeping. Repo is rsync'd to
+  `primes:wire-gauge/` (excluding `target/` and `.git/`); results scp'd
+  back into `results/` and committed.
+
+**Cross-host (M6, after the same-host report):** where Aeron, NATS and
+Kafka actually live in production — a real NIC, interrupt path, and kernel
+network stack on both ends. The harness needs no changes beyond running the
+echo peer on the second host and passing its address instead of spawning.
+
+- **Home LAN (free shakeout):** Mac ↔ primes proves the cross-host *mode*
+  works, but is not canonical: Wi-Fi jitter is milliseconds, so wired-only,
+  and the Mac end reintroduces the macOS scheduler tail.
+- **AWS (canonical):** 2× EC2 — not Lightsail; this needs placement control
+  and kernel tuning — in the **same AZ inside a cluster placement group**,
+  which is what gets the ~40–60µs RTT floor instead of cross-AZ ~500µs+.
+  c7i.xlarge on-demand ≈ $0.18/hr each, so a full evening campaign runs
+  **under $5**; c6in only if a throughput scenario proves PPS-bound. Ubuntu
+  LTS, same rustup + taskset discipline, irqbalance off.
+- **Ephemeral by design:** an `infra/` script (aws cli) creates the pair,
+  runs the campaign, terminates everything — nothing is left running, ever.
+  Everything tagged `Project=wire-gauge`, which plugs into the cost
+  allocation tags item already on Paul's list.
+- **Account:** the hobby account `106103710708`, us-east-1, per the account
+  pattern. The existing IAM users are service-scoped deploy users, so M6
+  needs a small EC2-capable IAM identity (`wire-gauge-bench`) — Paul's
+  call when the time comes, listed in TASKS.md.
+- **Broker topology decision, deferred to M6:** brokered systems cross-host
+  have three roles (publisher, broker, subscriber). Start 2-box with the
+  broker co-located with the echo side; 3-box only if results demand it.
+- **Multicast caveat for round 2:** a plain VPC does not carry multicast —
+  that needs Transit Gateway multicast domains. The MoldUDP64 work stays
+  same-host/LAN unless it earns the TGW complexity.
+
 ## Milestones
 
 - **M0 — this document + workspace skeleton.** Done 2026-08-31.
@@ -176,10 +224,20 @@ worth measuring.
   zero drops, and the generator holds schedule at 100k/s (send-lag p99
   3.3µs). The send-lag histogram is the run-validity check: if it grows, the
   generator — not the transport — is the bottleneck at that rate.
-- **M2 — the IPC axis.** Custom shm ring + iceoryx2.
+- **M2 — the IPC axis.** Custom shm ring (**done 2026-08-31** — SPSC
+  LMAX-style ring over file-backed shared memory, backpressure not
+  overwrite; primes pinned: p50 0.33µs RTT, p999 2.2–8.7µs) + iceoryx2
+  (open). First primes campaign ran the same day — 4 backends × 2 rates in
+  `results/primes-20260831.jsonl`: shm 0.33µs < uds 3.7–4.2µs < udp
+  5.0–6.4µs < tcp 5.9–7.3µs at p50, zero drops, hypothesis ordering
+  confirmed; the macOS shm p999 of 1.15ms fell to 8.7µs once pinned —
+  the platform-honesty rule made measurable.
 - **M3 — the brokered set.** NATS core, JetStream, Redis Streams, Kafka.
 - **M4 — Aeron**, IPC + UDP, quarantined because of the FFI risk.
 - **M5 — the report.** Comparison doc + charts, generated from `results/`.
+- **M6 — cross-host on AWS.** Two EC2 boxes in a cluster placement group,
+  the network-axis candidates re-measured over a real wire. See "Rigs".
+  Needs Paul: the `wire-gauge-bench` IAM identity.
 
 ## Repo conventions
 
