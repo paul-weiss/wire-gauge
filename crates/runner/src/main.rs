@@ -72,6 +72,8 @@ mod dispatch {
     pub const BACKENDS: &[&str] = &[
         "shm",
         "iceoryx2",
+        "aeron-ipc",
+        "aeron-udp",
         "uds",
         "tcp",
         "udp",
@@ -81,10 +83,18 @@ mod dispatch {
         "kafka",
     ];
 
+    fn aeron_mode(backend: &str) -> backend_aeron::Mode {
+        match backend {
+            "aeron-ipc" => backend_aeron::Mode::Ipc,
+            _ => backend_aeron::Mode::Udp,
+        }
+    }
+
     pub fn default_bind(backend: &str) -> io::Result<String> {
         match backend {
             "shm" => Ok(backend_shm::default_bind()),
             "iceoryx2" => Ok(backend_iceoryx2::default_bind()),
+            "aeron-ipc" | "aeron-udp" => Ok(backend_aeron::default_bind(aeron_mode(backend))),
             "nats" | "jetstream" => Ok(backend_nats::default_bind(broker::NATS_PORT)),
             "redis" => Ok(backend_redis::default_bind(broker::REDIS_PORT)),
             "kafka" => Ok(backend_kafka::default_bind(broker::KAFKA_PORT)),
@@ -96,6 +106,7 @@ mod dispatch {
         match backend {
             "shm" => backend_shm::echo(bind, msg_size),
             "iceoryx2" => backend_iceoryx2::echo(bind, msg_size),
+            "aeron-ipc" | "aeron-udp" => backend_aeron::echo(aeron_mode(backend), bind, msg_size),
             "nats" => backend_nats::echo(bind, msg_size),
             "jetstream" => backend_nats::echo_js(bind, msg_size),
             "redis" => backend_redis::echo(bind, msg_size),
@@ -112,6 +123,9 @@ mod dispatch {
         match backend {
             "shm" => backend_shm::connect(addr, msg_size),
             "iceoryx2" => backend_iceoryx2::connect(addr, msg_size),
+            "aeron-ipc" | "aeron-udp" => {
+                backend_aeron::connect(aeron_mode(backend), addr, msg_size)
+            }
             "nats" => backend_nats::connect(addr, msg_size),
             "jetstream" => backend_nats::connect_js(addr, msg_size),
             "redis" => backend_redis::connect(addr, msg_size),
@@ -124,6 +138,7 @@ mod dispatch {
     pub fn cleanup_paths(backend: &str, bind: &str) -> Vec<std::path::PathBuf> {
         match backend {
             "shm" => backend_shm::ring_paths(bind).into_iter().collect(),
+            "aeron-ipc" | "aeron-udp" => vec![std::path::PathBuf::from(bind)],
             "uds" => vec![std::path::PathBuf::from(bind)],
             _ => Vec::new(),
         }
@@ -228,7 +243,11 @@ impl EchoChild {
         self.child.kill().ok();
         self.child.wait().ok();
         for path in &self.cleanup {
-            std::fs::remove_file(path).ok();
+            if path.is_dir() {
+                std::fs::remove_dir_all(path).ok();
+            } else {
+                std::fs::remove_file(path).ok();
+            }
         }
     }
 }

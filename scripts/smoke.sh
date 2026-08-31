@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cargo build --release --quiet
-for b in shm iceoryx2 uds tcp udp nats jetstream redis kafka; do
+for b in shm iceoryx2 aeron-ipc aeron-udp uds tcp udp nats jetstream redis kafka; do
   ./target/release/wire-gauge rtt "$b" --rate 5000 --size 128 --duration 2 --warmup 1 2>/dev/null |
     python3 -c "
 import json, sys

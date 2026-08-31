@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+backend-aeron = { version = "0.1.0", path = "../backend-aeron" }
 backend-iceoryx2 = { version = "0.1.0", path = "../backend-iceoryx2" }
 backend-kafka = { version = "0.1.0", path = "../backend-kafka" }
 backend-nats = { version = "0.1.0", path = "../backend-nats" }

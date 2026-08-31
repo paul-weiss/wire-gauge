@@ -8,6 +8,7 @@ members = [
     "crates/backend-redis",
     "crates/backend-nats",
     "crates/backend-kafka",
+    "crates/backend-aeron",
     "crates/runner",
 ]
 
