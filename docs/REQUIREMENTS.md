@@ -50,7 +50,8 @@ spanning both, which makes it the hinge of the comparison.
 | iceoryx2 | Rust-native zero-copy shared-memory pub/sub; the strongest "don't hand-roll it" candidate. Supports macOS. |
 | Aeron IPC | Same API as Aeron-over-UDP, shared-memory log buffers. |
 | Unix domain sockets | The practical default everyone actually uses. |
-| TCP loopback | Reference point. |
+| Raw TCP (`std::net`), loopback | Reference point; no framework, just the kernel. |
+| Raw UDP unicast (`std::net`), loopback | Added 2026-08-31 (Paul). The floor of the network axis: shows exactly what Aeron's reliability layer costs, since Aeron rides on UDP. Unreliable by design — the harness records drops rather than retransmitting. |
 
 **Network / messaging systems:**
 
@@ -127,6 +128,7 @@ behavior these single numbers hide:
 |---|---|
 | shm ring (custom) | 0.1–0.5 µs |
 | iceoryx2 / Aeron IPC | 0.5–2 µs |
+| raw UDP loopback | 3–10 µs |
 | Aeron UDP | 5–15 µs |
 | Unix domain socket | 5–20 µs |
 | ZeroMQ | 15–30 µs |
@@ -149,6 +151,14 @@ Rust workspace, matching the house stack:
 
 The `Transport` trait is designed in M1 against the two simplest backends —
 not before. Designing it in the abstract is how harnesses grow warts.
+
+**Blocking, not async, on the hot path.** The raw-socket baselines (UDS, TCP,
+UDP) use blocking `std::net`/`nix` calls — a tokio runtime adds scheduler and
+wakeup latency that would contaminate the very floor the baselines exist to
+establish. Async clients appear only where a backend's official client is
+async (e.g. `async-nats`), and that gets said in the report; a tokio variant
+of a raw socket counts as the one "documented second config" if it's ever
+worth measuring.
 
 ## Milestones
 
