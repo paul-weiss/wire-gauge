@@ -66,11 +66,12 @@ mod dispatch {
     use harness::transport::{Receiver, Sender};
     use std::io;
 
-    pub const BACKENDS: &[&str] = &["shm", "uds", "tcp", "udp"];
+    pub const BACKENDS: &[&str] = &["shm", "iceoryx2", "uds", "tcp", "udp"];
 
     pub fn default_bind(backend: &str) -> io::Result<String> {
         match backend {
             "shm" => Ok(backend_shm::default_bind()),
+            "iceoryx2" => Ok(backend_iceoryx2::default_bind()),
             _ => backend_sockets::default_bind(backend),
         }
     }
@@ -78,6 +79,7 @@ mod dispatch {
     pub fn echo(backend: &str, bind: &str, msg_size: usize) -> io::Result<()> {
         match backend {
             "shm" => backend_shm::echo(bind, msg_size),
+            "iceoryx2" => backend_iceoryx2::echo(bind, msg_size),
             _ => backend_sockets::echo(backend, bind, msg_size),
         }
     }
@@ -89,6 +91,7 @@ mod dispatch {
     ) -> io::Result<(Box<dyn Sender>, Box<dyn Receiver>)> {
         match backend {
             "shm" => backend_shm::connect(addr, msg_size),
+            "iceoryx2" => backend_iceoryx2::connect(addr, msg_size),
             _ => backend_sockets::connect(backend, addr, msg_size),
         }
     }

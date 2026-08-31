@@ -121,6 +121,7 @@ impl Ring {
             msg_size,
             stride: Self::layout(msg_size).0,
         };
+        ring.prefault();
         ring.write_u64(MSG_SIZE_OFF, msg_size as u64);
         ring.write_u64(CAPACITY_OFF, CAPACITY);
         ring.write_u64(MAGIC_OFF, MAGIC);
@@ -145,7 +146,28 @@ impl Ring {
         {
             return Err(io::Error::other("ring header mismatch"));
         }
+        ring.prefault();
         Ok(ring)
+    }
+
+    /// Touch every page with a write so the whole mapping is faulted in and
+    /// dirty before the first message. Mappings fault per process, so both
+    /// ends do this. Without it, a run that covers the ring's first lap eats
+    /// a soft fault every page-boundary crossing — measured on primes as a
+    /// 7µs p99 at 5k msgs/s (60k messages ≈ one lap of a 64K ring) against
+    /// 0.4µs at 100k msgs/s, where 18 laps dilute the first one.
+    ///
+    /// Safe to run concurrently with a quiet peer: every touch rewrites the
+    /// value it just read, and nothing flows until after both ends open.
+    fn prefault(&self) {
+        const PAGE: usize = 4096;
+        let base = self.map.as_ptr() as *mut u64;
+        for off in (0..self.map.len()).step_by(PAGE) {
+            unsafe {
+                let p = base.byte_add(off);
+                p.write_volatile(p.read_volatile());
+            }
+        }
     }
 
     fn write_u64(&self, off: usize, v: u64) {
@@ -239,28 +261,27 @@ impl Receiver for RingConsumer {
         debug_assert_eq!(buf.len(), self.ring.msg_size);
         let seq = self.next_seq;
         let stamp = self.ring.stamp(seq);
-        // Spin briefly before consulting the clock: on the hot path the next
-        // message is nanoseconds away and an Instant::now() per poll would
-        // dominate the measurement.
+        // Keep Instant::now() off the wait loop: spin freely first, then
+        // consult the clock only every SPIN_STRIDE misses. Checking it every
+        // iteration showed up as p99 jitter at low rates (measured on primes:
+        // 6.95µs vs 0.94µs for the strided iceoryx2 loop at 5k msgs/s).
+        const SPIN_POLLS: u32 = 1_000;
+        const SPIN_STRIDE: u32 = 256;
+        let mut misses: u32 = 0;
         let mut deadline: Option<Instant> = None;
         while stamp.load(Ordering::Acquire) != seq + 1 {
-            match deadline {
-                None => {
-                    for _ in 0..1_000 {
-                        if stamp.load(Ordering::Acquire) == seq + 1 {
-                            break;
+            misses += 1;
+            if misses >= SPIN_POLLS && misses.is_multiple_of(SPIN_STRIDE) {
+                match deadline {
+                    None => deadline = Some(Instant::now() + RECV_TIMEOUT),
+                    Some(d) => {
+                        if Instant::now() > d {
+                            return Ok(RecvOutcome::TimedOut);
                         }
-                        std::hint::spin_loop();
                     }
-                    deadline = Some(Instant::now() + RECV_TIMEOUT);
-                }
-                Some(d) => {
-                    if Instant::now() > d {
-                        return Ok(RecvOutcome::TimedOut);
-                    }
-                    std::hint::spin_loop();
                 }
             }
+            std::hint::spin_loop();
         }
         unsafe {
             std::ptr::copy_nonoverlapping(self.ring.payload_ptr(seq), buf.as_mut_ptr(), buf.len());

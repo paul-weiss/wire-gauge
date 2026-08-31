@@ -20,8 +20,10 @@ pub enum RecvOutcome {
     Closed,
 }
 
-/// Sending half of a connection. Must be usable from its own thread.
-pub trait Sender: Send {
+/// Sending half of a connection. Stays on the thread that created it —
+/// deliberately not `Send`, because some backends (iceoryx2) have
+/// single-threaded ports and the harness never moves the sender anyway.
+pub trait Sender {
     /// Send one whole message. Blocking; a short write is an error.
     fn send(&mut self, msg: &[u8]) -> io::Result<()>;
 }

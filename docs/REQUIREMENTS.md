@@ -224,14 +224,26 @@ echo peer on the second host and passing its address instead of spawning.
   zero drops, and the generator holds schedule at 100k/s (send-lag p99
   3.3µs). The send-lag histogram is the run-validity check: if it grows, the
   generator — not the transport — is the bottleneck at that rate.
-- **M2 — the IPC axis.** Custom shm ring (**done 2026-08-31** — SPSC
-  LMAX-style ring over file-backed shared memory, backpressure not
-  overwrite; primes pinned: p50 0.33µs RTT, p999 2.2–8.7µs) + iceoryx2
-  (open). First primes campaign ran the same day — 4 backends × 2 rates in
-  `results/primes-20260831.jsonl`: shm 0.33µs < uds 3.7–4.2µs < udp
-  5.0–6.4µs < tcp 5.9–7.3µs at p50, zero drops, hypothesis ordering
-  confirmed; the macOS shm p999 of 1.15ms fell to 8.7µs once pinned —
-  the platform-honesty rule made measurable.
+- **M2 — the IPC axis. Done 2026-08-31.** Custom shm ring (SPSC LMAX-style
+  ring over file-backed shared memory, backpressure not overwrite) and
+  iceoryx2 0.9.3 (plain `ipc` flavor — not `ipc_threadsafe`, whose locks
+  the harness doesn't need; dynamic `[u8]` payloads, 4096-sample subscriber
+  buffer, busy-poll receive; its single-threaded Rc-based ports forced one
+  harness change — `Sender` dropped its `Send` bound, and the iceoryx2
+  receiver constructs its port lazily inside the receive thread).
+  Primes, pinned, 128B: **shm p50 0.35µs / p99 0.44µs; iceoryx2 p50
+  0.81–0.84µs / p99 0.94–1.09µs** — both in their hypothesized bands, zero
+  drops, raw ring ≈ 2.3x faster than the framework.
+  Two methodology lessons, both caught by the numbers: (1) checking
+  `Instant::now()` every poll iteration adds visible p99 jitter — spin
+  freely, stride the clock checks; (2) **first-touch page faults**: at
+  5k msgs/s a 60k-message run covers the 64K-slot ring exactly once, and
+  every ~21st message paid a soft fault (p99 7.5µs); pre-faulting the
+  mapping at open dropped that to 0.44µs. The full campaign lives in
+  `results/primes-20260831.jsonl`: shm 0.35µs < iceoryx2 0.8µs < uds
+  3.7–4.2µs < udp 5.0–6.4µs < tcp 5.9–7.3µs at p50.
+  Also proven en route: the macOS shm p999 of 1.15ms fell to 8.7µs once
+  pinned on primes — the platform-honesty rule made measurable.
 - **M3 — the brokered set.** NATS core, JetStream, Redis Streams, Kafka.
 - **M4 — Aeron**, IPC + UDP, quarantined because of the FFI risk.
 - **M5 — the report.** Comparison doc + charts, generated from `results/`.
