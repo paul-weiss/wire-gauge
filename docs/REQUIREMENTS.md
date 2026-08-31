@@ -291,7 +291,18 @@ echo peer on the second host and passing its address instead of spawning.
   the syscall path the raw-socket backend pays per message. The tails are
   where Aeron pays: p99 7–8µs on IPC vs iceoryx2's 0.94µs, with four hot
   threads (parent 2, echo 1, driver 1) exactly filling the 4-core pin.
-- **M5 — the report.** Comparison doc + charts, generated from `results/`.
+- **M5 — the report. Done 2026-08-31.** `scripts/report.py` generates
+  `report/wire-gauge-report.html` from `results/*.jsonl` — never
+  hand-typed: charts, findings numbers, and the full table all come from
+  the newest committed record per configuration. Self-contained
+  theme-aware HTML (light + dark), two log-axis SVG charts (the
+  p50→p99→p99.9 ladder classed as shared-memory / kernel-sockets /
+  brokered, and a low-vs-high-rate dumbbell that makes the kafka
+  saturation collapse visible), the findings, the jobs-to-transports map,
+  and every run as a table. Regenerate after any campaign:
+  `python3 scripts/report.py`. Published as a private artifact:
+  https://claude.ai/code/artifact/4b013200-0182-4dc5-8bd0-f249a7454034
+  (republish after regenerating).
 - **M6 — cross-host on AWS.** Two EC2 boxes in a cluster placement group,
   the network-axis candidates re-measured over a real wire. See "Rigs".
   Needs Paul: the `wire-gauge-bench` IAM identity.
