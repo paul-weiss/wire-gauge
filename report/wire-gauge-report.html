@@ -39,6 +39,13 @@ svg .grid { stroke: var(--line); stroke-width: 1; }
 svg .axis { fill: var(--text-secondary); font: 11px "IBM Plex Mono", monospace; }
 svg .rowlabel { fill: var(--text-primary); font: 12.5px "IBM Plex Mono", monospace; }
 svg .value { fill: var(--text-secondary); font: 11px "IBM Plex Mono", monospace; }
+.cands { display: grid; gap: 10px 28px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.cands h3 { font-size: 14px; font-weight: 600; margin: 14px 0 2px; display: flex; align-items: center; gap: 8px; }
+.cands h3 i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.cands dl { margin: 0; }
+.cands dt { font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 500; margin-top: 12px; }
+.cands dd { margin: 2px 0 0; font-size: 13.5px; color: var(--text-secondary); line-height: 1.5; }
+.cands code { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: right; padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap;
@@ -60,6 +67,69 @@ strong { font-weight: 600; }
 coordinated-omission-free workload: fixed-size 128B messages offered on a
 strict schedule, latency measured from <em>intended</em> send time, sends never gated on responses.
 Same harness, same machine, one echo process per run.</p>
+
+<h2>The candidates</h2>
+
+<div class="cands">
+<section>
+<h3><i style="background:var(--series-1)"></i>Shared memory</h3>
+<dl>
+<dt>shm</dt><dd>The hand-rolled floor: a single-producer/single-consumer ring in the LMAX
+style over a file-backed shared mapping. The producer copies the payload and publishes an
+8-byte sequence stamp with a release store; the consumer busy-spins on the stamp it expects.
+Flow control is backpressure, never overwrite, so a slow consumer surfaces as send lag
+instead of silent loss. No dependencies; everything else is measured against this.</dd>
+<dt>aeron-ipc</dt><dd>Aeron's same-host mode: publications write to shared-memory log
+buffers managed by its media driver (here embedded in the echo process, SHARED threading,
+spin idle — Aeron's published low-latency single-core profile). Identical API to aeron-udp,
+which is why Aeron is the hinge of this comparison. Via the rusteron FFI bindings over the
+vendored C client, statically linked.</dd>
+<dt>iceoryx2</dt><dd>Rust-native zero-copy publish/subscribe from the Eclipse iceoryx
+lineage — decentralized shared-memory services with discovery, loaned samples, and safe
+overflow, no daemon. Run in its plain <code>ipc</code> flavor (no locking), exact-size
+payload loans, a 4,096-sample subscriber buffer, busy-poll receive. The strongest
+“don't hand-roll it” IPC candidate.</dd>
+</dl>
+</section>
+<section>
+<h3><i style="background:var(--series-2)"></i>Kernel sockets</h3>
+<dl>
+<dt>uds</dt><dd>A Unix domain stream socket — the practical same-host default everyone
+actually ships. Blocking <code>std::net</code> calls, fixed-size framing (read exactly one
+message), no framework anywhere in the path.</dd>
+<dt>tcp</dt><dd>TCP over loopback with <code>TCP_NODELAY</code> on both ends (Nagle would
+batch 128-byte sends and measure the algorithm, not the wire). The reference point for
+“just use TCP.”</dd>
+<dt>udp</dt><dd>Connected UDP unicast over loopback, one datagram per message, deliberately
+unreliable: nothing retransmits and the harness counts drops instead of hiding them. The
+floor of the network axis — the delta to aeron-udp prices Aeron's reliability layer.</dd>
+<dt>aeron-udp</dt><dd>Aeron over UDP unicast: the media driver owns the sockets, adds
+sequencing, flow control, and gap detection, and hands messages to the client through shared
+memory. Classed with kernel sockets because the wire is UDP loopback; the machinery on top
+is what's being priced.</dd>
+</dl>
+</section>
+<section>
+<h3><i style="background:var(--series-3)"></i>Brokered</h3>
+<dl>
+<dt>nats</dt><dd>Core NATS: a lightweight broker doing fire-and-forget pub/sub — no
+persistence, no acknowledgments, a slow subscriber gets cut off. Driven through the official
+async client (<code>async-nats</code>) on a one-worker runtime, publish + flush per message
+so a send is on the wire before it returns.</dd>
+<dt>jetstream</dt><dd>NATS's persistence layer: both directions run through file-backed
+streams and delivery comes from an ordered pull consumer, so the number measured is
+publish → stored → delivered. Publisher-acknowledgment latency is deliberately not in this
+round.</dd>
+<dt>redis</dt><dd>Redis Streams: append with XADD, consume with blocking XREAD, one
+single-threaded server in between. Run at its best case — no AOF, no snapshots — and every
+XADD is a full client–server round trip, so over-offered load shows up as send lag.</dd>
+<dt>kafka</dt><dd>The durability and replay standard, as a single-node KRaft broker with one
+partition, driven by the official C client (librdkafka) at <code>linger.ms=0</code> and
+<code>acks=all</code>. Enqueueing is asynchronous — delivery failures become counted drops,
+and saturation becomes queueing delay the schedule-honest harness can see.</dd>
+</dl>
+</section>
+</div>
 
 <h2>The ladder — 5k/s, p50 → p99 → p99.9</h2>
 <div class="legend">
