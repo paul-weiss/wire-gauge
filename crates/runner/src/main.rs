@@ -54,6 +54,8 @@ struct EchoArgs {
     size: usize,
 }
 
+mod broker;
+
 fn main() -> io::Result<()> {
     match Cli::parse() {
         Cli::Echo(args) => dispatch::echo(&args.backend, &args.bind, args.size),
@@ -63,15 +65,29 @@ fn main() -> io::Result<()> {
 
 /// One match per backend crate; new backends get a line in each function.
 mod dispatch {
+    use crate::broker;
     use harness::transport::{Receiver, Sender};
     use std::io;
 
-    pub const BACKENDS: &[&str] = &["shm", "iceoryx2", "uds", "tcp", "udp"];
+    pub const BACKENDS: &[&str] = &[
+        "shm",
+        "iceoryx2",
+        "uds",
+        "tcp",
+        "udp",
+        "nats",
+        "jetstream",
+        "redis",
+        "kafka",
+    ];
 
     pub fn default_bind(backend: &str) -> io::Result<String> {
         match backend {
             "shm" => Ok(backend_shm::default_bind()),
             "iceoryx2" => Ok(backend_iceoryx2::default_bind()),
+            "nats" | "jetstream" => Ok(backend_nats::default_bind(broker::NATS_PORT)),
+            "redis" => Ok(backend_redis::default_bind(broker::REDIS_PORT)),
+            "kafka" => Ok(backend_kafka::default_bind(broker::KAFKA_PORT)),
             _ => backend_sockets::default_bind(backend),
         }
     }
@@ -80,6 +96,10 @@ mod dispatch {
         match backend {
             "shm" => backend_shm::echo(bind, msg_size),
             "iceoryx2" => backend_iceoryx2::echo(bind, msg_size),
+            "nats" => backend_nats::echo(bind, msg_size),
+            "jetstream" => backend_nats::echo_js(bind, msg_size),
+            "redis" => backend_redis::echo(bind, msg_size),
+            "kafka" => backend_kafka::echo(bind, msg_size),
             _ => backend_sockets::echo(backend, bind, msg_size),
         }
     }
@@ -92,6 +112,10 @@ mod dispatch {
         match backend {
             "shm" => backend_shm::connect(addr, msg_size),
             "iceoryx2" => backend_iceoryx2::connect(addr, msg_size),
+            "nats" => backend_nats::connect(addr, msg_size),
+            "jetstream" => backend_nats::connect_js(addr, msg_size),
+            "redis" => backend_redis::connect(addr, msg_size),
+            "kafka" => backend_kafka::connect(addr, msg_size),
             _ => backend_sockets::connect(backend, addr, msg_size),
         }
     }
@@ -124,6 +148,7 @@ fn rtt(args: RttArgs) -> io::Result<()> {
         ));
     }
     let bind = dispatch::default_bind(&args.backend)?;
+    let mut broker = broker::Broker::start_for(&args.backend)?;
     let mut child = EchoChild::spawn(&args.backend, &bind, args.size)?;
 
     let (tx, rx) = dispatch::connect(&args.backend, &child.addr, args.size)?;
@@ -139,6 +164,9 @@ fn rtt(args: RttArgs) -> io::Result<()> {
     );
     let outcome = run_rtt(tx, rx, &cfg)?;
     child.stop();
+    if let Some(b) = broker.as_mut() {
+        b.stop();
+    }
 
     let record = RunRecord::for_rtt(&args.backend, &cfg, &outcome);
     println!("{}", record.to_json_line());

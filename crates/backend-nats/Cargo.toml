@@ -1,0 +1,12 @@
+[package]
+name = "backend-nats"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-nats = "0.50.0"
+futures = "0.3.34"
+harness = { path = "../harness" }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "time"] }

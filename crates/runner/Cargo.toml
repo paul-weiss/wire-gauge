@@ -7,6 +7,9 @@ publish.workspace = true
 
 [dependencies]
 backend-iceoryx2 = { version = "0.1.0", path = "../backend-iceoryx2" }
+backend-kafka = { version = "0.1.0", path = "../backend-kafka" }
+backend-nats = { version = "0.1.0", path = "../backend-nats" }
+backend-redis = { version = "0.1.0", path = "../backend-redis" }
 backend-shm = { path = "../backend-shm" }
 backend-sockets = { path = "../backend-sockets" }
 clap = { version = "4", features = ["derive"] }

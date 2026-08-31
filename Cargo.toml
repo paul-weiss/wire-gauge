@@ -5,6 +5,9 @@ members = [
     "crates/backend-sockets",
     "crates/backend-shm",
     "crates/backend-iceoryx2",
+    "crates/backend-redis",
+    "crates/backend-nats",
+    "crates/backend-kafka",
     "crates/runner",
 ]
 
