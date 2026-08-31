@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/harness", "crates/backend-sockets", "crates/runner"]
+members = [
+    "crates/harness",
+    "crates/backend-sockets",
+    "crates/backend-shm",
+    "crates/runner",
+]
 
 [workspace.package]
 edition = "2021"

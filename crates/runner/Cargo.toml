@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+backend-shm = { path = "../backend-shm" }
 backend-sockets = { path = "../backend-sockets" }
 clap = { version = "4", features = ["derive"] }
 harness = { path = "../harness" }

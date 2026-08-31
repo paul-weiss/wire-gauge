@@ -56,8 +56,50 @@ struct EchoArgs {
 
 fn main() -> io::Result<()> {
     match Cli::parse() {
-        Cli::Echo(args) => backend_sockets::echo(&args.backend, &args.bind, args.size),
+        Cli::Echo(args) => dispatch::echo(&args.backend, &args.bind, args.size),
         Cli::Rtt(args) => rtt(args),
+    }
+}
+
+/// One match per backend crate; new backends get a line in each function.
+mod dispatch {
+    use harness::transport::{Receiver, Sender};
+    use std::io;
+
+    pub const BACKENDS: &[&str] = &["shm", "uds", "tcp", "udp"];
+
+    pub fn default_bind(backend: &str) -> io::Result<String> {
+        match backend {
+            "shm" => Ok(backend_shm::default_bind()),
+            _ => backend_sockets::default_bind(backend),
+        }
+    }
+
+    pub fn echo(backend: &str, bind: &str, msg_size: usize) -> io::Result<()> {
+        match backend {
+            "shm" => backend_shm::echo(bind, msg_size),
+            _ => backend_sockets::echo(backend, bind, msg_size),
+        }
+    }
+
+    pub fn connect(
+        backend: &str,
+        addr: &str,
+        msg_size: usize,
+    ) -> io::Result<(Box<dyn Sender>, Box<dyn Receiver>)> {
+        match backend {
+            "shm" => backend_shm::connect(addr, msg_size),
+            _ => backend_sockets::connect(backend, addr, msg_size),
+        }
+    }
+
+    /// Files the run leaves behind that the orchestrator must remove.
+    pub fn cleanup_paths(backend: &str, bind: &str) -> Vec<std::path::PathBuf> {
+        match backend {
+            "shm" => backend_shm::ring_paths(bind).into_iter().collect(),
+            "uds" => vec![std::path::PathBuf::from(bind)],
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -68,10 +110,20 @@ fn rtt(args: RttArgs) -> io::Result<()> {
             format!("--size must be at least {SEQ_HEADER_BYTES}"),
         ));
     }
-    let bind = backend_sockets::default_bind(&args.backend)?;
+    if !dispatch::BACKENDS.contains(&args.backend.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "unknown backend '{}' (have: {})",
+                args.backend,
+                dispatch::BACKENDS.join(", ")
+            ),
+        ));
+    }
+    let bind = dispatch::default_bind(&args.backend)?;
     let mut child = EchoChild::spawn(&args.backend, &bind, args.size)?;
 
-    let (tx, rx) = backend_sockets::connect(&args.backend, &child.addr, args.size)?;
+    let (tx, rx) = dispatch::connect(&args.backend, &child.addr, args.size)?;
     let cfg = RttConfig {
         rate: args.rate,
         msg_size: args.size,
@@ -106,7 +158,7 @@ fn rtt(args: RttArgs) -> io::Result<()> {
 struct EchoChild {
     child: Child,
     addr: String,
-    uds_path: Option<String>,
+    cleanup: Vec<std::path::PathBuf>,
 }
 
 impl EchoChild {
@@ -137,14 +189,14 @@ impl EchoChild {
         Ok(Self {
             child,
             addr,
-            uds_path: (backend == "uds").then(|| bind.to_string()),
+            cleanup: dispatch::cleanup_paths(backend, bind),
         })
     }
 
     fn stop(&mut self) {
         self.child.kill().ok();
         self.child.wait().ok();
-        if let Some(path) = &self.uds_path {
+        for path in &self.cleanup {
             std::fs::remove_file(path).ok();
         }
     }
