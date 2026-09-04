@@ -123,8 +123,8 @@ Open:
 - **M6, cross-host on AWS.** Two EC2 instances in a cluster placement group,
   the network-axis transports re-measured over a real NIC and kernel stack.
   Scoped in `docs/REQUIREMENTS.md` under Rigs.
-- **Round 2 candidates:** UDP multicast, Iggy, ZeroMQ, fan-out and burst
-  scenarios.
+- **ZeroMQ**, a round-1 candidate that was never built.
+- **Round 2:** UDP multicast, Iggy, fan-out and burst scenarios.
 
 ## License
 
