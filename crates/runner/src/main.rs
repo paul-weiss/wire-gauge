@@ -26,7 +26,7 @@ enum Cli {
 
 #[derive(Parser)]
 struct RttArgs {
-    /// Backend to measure: uds | tcp | udp
+    /// Backend to measure: shm, iceoryx2, aeron-ipc, aeron-udp, uds, tcp, udp, nats, jetstream, redis, kafka
     backend: String,
     /// Offered load, messages per second.
     #[arg(long, default_value_t = 10_000)]
