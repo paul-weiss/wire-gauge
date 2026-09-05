@@ -26,7 +26,7 @@ echo_sweep() { ssh_ "$SSH_USER@$1" 'pkill -f "wire-gauge-bin ech[o]" ; pkill -f 
   echo "wire-gauge M6 campaign $DATE, instance type $INSTANCE_TYPE"
   echo "a (client): $A_PRIV $(state "['hosts']['a']['az']")"
   for t in $TOPOS; do k=b; [ "$t" = cross-az ] && k=c; echo "$t echo host $k: $(state "['hosts']['$k']['priv']") $(state "['hosts']['$k']['az']")"; done
-} | tee "$NOTES" >&2
+} | tee -a "$NOTES" >&2   # append: supplementary passes must not erase earlier floors
 
 for topo in $TOPOS; do
   k=b; [ "$topo" = cross-az ] && k=c

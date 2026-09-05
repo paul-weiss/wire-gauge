@@ -1,6 +1,27 @@
 wire-gauge M6 campaign 20260905, instance type c7i.2xlarge
 a (client): 172.31.2.166 us-east-1a
+same-az echo host b: 172.31.4.22 us-east-1a
 cross-az echo host c: 172.31.23.92 us-east-1b
+
+Three passes on the same rig (main 13:27, supplementary 13:56, final 14:02 ET).
+ICMP floors as measured by `ping -c 20 -i 0.2` from a before each pass; the
+parser takes the last line per topology.
+
+[same-az] icmp floor, a -> b:
+20 packets transmitted, 20 received, 0% packet loss, time 3950ms
+rtt min/avg/max/mdev = 0.402/0.475/0.541/0.038 ms
+
+[cross-az] icmp floor, a -> c:
+20 packets transmitted, 20 received, 0% packet loss, time 3817ms
+rtt min/avg/max/mdev = 1.348/1.481/2.554/0.248 ms
+
+[same-az] icmp floor, a -> b:
+20 packets transmitted, 20 received, 0% packet loss, time 3948ms
+rtt min/avg/max/mdev = 0.365/0.461/0.560/0.043 ms
+
+[cross-az] icmp floor, a -> c:
+20 packets transmitted, 20 received, 0% packet loss, time 3817ms
+rtt min/avg/max/mdev = 1.283/1.400/1.514/0.052 ms
 
 [cross-az] icmp floor, a -> c:
 20 packets transmitted, 20 received, 0% packet loss, time 3817ms
