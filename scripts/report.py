@@ -534,7 +534,9 @@ and saturation becomes queueing delay the schedule-honest harness can see. <span
 <td>NATS core: ~40µs, no persistence to configure, and the simplest operational story here.</td></tr>
 </table>"""
 
-    doc = f"""<title>Wire-Gauge</title>
+    doc = f"""<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wire-Gauge</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
