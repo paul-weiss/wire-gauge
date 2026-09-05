@@ -1,6 +1,12 @@
 //! The wire-gauge runner: `rtt <backend>` orchestrates one run — spawn this
 //! same binary as the echo child, wait for its READY line, connect, drive
 //! the scenario, emit one JSONL record.
+//!
+//! Cross-host (M6): run `echo <backend> --bind <this-host-ip>:<port>
+//! [--broker]` on the far machine, read the READY line it prints, and pass
+//! that address to `rtt <backend> --peer <addr> --topology <label>` here.
+//! Nothing is spawned locally in that mode; the campaign script owns both
+//! processes' lifetimes.
 
 use std::io::{self, BufRead, BufReader};
 use std::path::PathBuf;
@@ -19,8 +25,9 @@ use harness::scenario::{run_rtt, RttConfig, SEQ_HEADER_BYTES};
 enum Cli {
     /// Run the 1→1 round-trip scenario against a backend.
     Rtt(RttArgs),
-    /// Internal: run as the echo peer. Spawned by `rtt`.
-    #[command(hide = true)]
+    /// Run as the echo peer. `rtt` spawns this itself for same-host runs;
+    /// for cross-host runs start it by hand on the far machine and pass the
+    /// READY address it prints to `rtt --peer`.
     Echo(EchoArgs),
 }
 
@@ -43,22 +50,44 @@ struct RttArgs {
     /// Append the JSONL record here as well as printing it.
     #[arg(long)]
     out: Option<PathBuf>,
+    /// Address announced by an `echo` already running elsewhere. Skips
+    /// spawning the echo child and any local broker.
+    #[arg(long)]
+    peer: Option<String>,
+    /// Label recorded on the run: "same-host", "aws-same-az", ...
+    #[arg(long, default_value = "same-host")]
+    topology: String,
 }
 
 #[derive(Parser)]
 struct EchoArgs {
     backend: String,
+    /// Bind address (or, for aeron-udp, `<dir>?c2s=..&s2c=..`). For a
+    /// remote client use this host's reachable IP, not loopback.
     #[arg(long)]
     bind: String,
     #[arg(long)]
     size: usize,
+    /// Start this backend's broker here too, listening on all interfaces
+    /// and advertising the host part of --bind. Cross-host only; same-host
+    /// runs let `rtt` own the broker.
+    #[arg(long)]
+    broker: bool,
 }
 
 mod broker;
 
 fn main() -> io::Result<()> {
     match Cli::parse() {
-        Cli::Echo(args) => dispatch::echo(&args.backend, &args.bind, args.size),
+        Cli::Echo(args) => {
+            let _broker = if args.broker {
+                let host = args.bind.split(':').next().unwrap_or("127.0.0.1");
+                broker::Broker::start_for(&args.backend, Some(host))?
+            } else {
+                None
+            };
+            dispatch::echo(&args.backend, &args.bind, args.size)
+        }
         Cli::Rtt(args) => rtt(args),
     }
 }
@@ -162,11 +191,17 @@ fn rtt(args: RttArgs) -> io::Result<()> {
             ),
         ));
     }
-    let bind = dispatch::default_bind(&args.backend)?;
-    let mut broker = broker::Broker::start_for(&args.backend)?;
-    let mut child = EchoChild::spawn(&args.backend, &bind, args.size)?;
+    let (addr, mut child, mut broker) = match &args.peer {
+        Some(peer) => (peer.clone(), None, None),
+        None => {
+            let bind = dispatch::default_bind(&args.backend)?;
+            let broker = broker::Broker::start_for(&args.backend, None)?;
+            let child = EchoChild::spawn(&args.backend, &bind, args.size)?;
+            (child.addr.clone(), Some(child), broker)
+        }
+    };
 
-    let (tx, rx) = dispatch::connect(&args.backend, &child.addr, args.size)?;
+    let (tx, rx) = dispatch::connect(&args.backend, &addr, args.size)?;
     let cfg = RttConfig {
         rate: args.rate,
         msg_size: args.size,
@@ -174,16 +209,30 @@ fn rtt(args: RttArgs) -> io::Result<()> {
         warmup: Duration::from_secs(args.warmup),
     };
     eprintln!(
-        "wire-gauge rtt-1to1: backend={} rate={}/s size={}B duration={}s warmup={}s",
-        args.backend, cfg.rate, cfg.msg_size, args.duration, args.warmup
+        "wire-gauge rtt-1to1: backend={} rate={}/s size={}B duration={}s warmup={}s topology={} peer={}",
+        args.backend,
+        cfg.rate,
+        cfg.msg_size,
+        args.duration,
+        args.warmup,
+        args.topology,
+        args.peer.as_deref().unwrap_or("(spawned)")
     );
     let outcome = run_rtt(tx, rx, &cfg)?;
-    child.stop();
+    if let Some(c) = child.as_mut() {
+        c.stop();
+    }
     if let Some(b) = broker.as_mut() {
         b.stop();
     }
 
-    let record = RunRecord::for_rtt(&args.backend, &cfg, &outcome);
+    let record = RunRecord::for_rtt(
+        &args.backend,
+        &cfg,
+        &outcome,
+        &args.topology,
+        args.peer.as_deref(),
+    );
     println!("{}", record.to_json_line());
     if let Some(path) = &args.out {
         record.append_to(path)?;

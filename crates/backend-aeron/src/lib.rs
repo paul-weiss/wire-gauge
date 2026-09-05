@@ -27,6 +27,8 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::io;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rusteron_client::{
@@ -56,15 +58,82 @@ pub enum Mode {
     Udp,
 }
 
+/// UDP endpoints for the two directions. Same-host runs use loopback on
+/// fixed ports; a cross-host run (M6) names both machines explicitly, since
+/// each side must *bind* the endpoint it receives on: the echo host owns
+/// `c2s`, the measuring host owns `s2c`.
+#[derive(Clone)]
+struct Endpoints {
+    c2s: String,
+    s2c: String,
+}
+
+impl Endpoints {
+    fn loopback() -> Self {
+        Self {
+            c2s: format!("127.0.0.1:{UDP_PORT_C2S}"),
+            s2c: format!("127.0.0.1:{UDP_PORT_S2C}"),
+        }
+    }
+}
+
+/// The address string both roles receive is `<driver-dir>` for same-host
+/// runs, or `<driver-dir>?c2s=<echo-ip>:<port>&s2c=<client-ip>:<port>` for
+/// cross-host ones. Returns the dir and, when present, the endpoints.
+fn parse_spec(spec: &str) -> (String, Option<Endpoints>) {
+    let Some((dir, query)) = spec.split_once('?') else {
+        return (spec.to_string(), None);
+    };
+    let mut ep = Endpoints::loopback();
+    for kv in query.split('&') {
+        match kv.split_once('=') {
+            Some(("c2s", v)) => ep.c2s = v.to_string(),
+            Some(("s2c", v)) => ep.s2c = v.to_string(),
+            _ => {}
+        }
+    }
+    (dir.to_string(), Some(ep))
+}
+
 impl Mode {
-    fn channel(self, direction: &str) -> CString {
+    fn channel(self, direction: &str, ep: &Endpoints) -> CString {
         let s = match (self, direction) {
             (Mode::Ipc, _) => "aeron:ipc".to_string(),
-            (Mode::Udp, "c2s") => format!("aeron:udp?endpoint=127.0.0.1:{UDP_PORT_C2S}"),
-            (Mode::Udp, _) => format!("aeron:udp?endpoint=127.0.0.1:{UDP_PORT_S2C}"),
+            (Mode::Udp, "c2s") => format!("aeron:udp?endpoint={}", ep.c2s),
+            (Mode::Udp, _) => format!("aeron:udp?endpoint={}", ep.s2c),
         };
         CString::new(s).expect("no NUL in channel")
     }
+}
+
+/// An embedded media driver that stops when dropped. The echo child owns
+/// one always; the measuring side owns one only when the echo is on another
+/// host, because then there is no local driver to attach to.
+struct DriverGuard {
+    stop: Arc<AtomicBool>,
+    _handle: Box<dyn std::any::Any>,
+}
+
+impl Drop for DriverGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+fn launch_driver(dir: &str) -> io::Result<DriverGuard> {
+    use rusteron_media_driver::{AeronDriver, AeronDriverContext};
+    // The C driver reads these from the environment at context creation.
+    std::env::set_var("AERON_THREADING_MODE", "SHARED");
+    std::env::set_var("AERON_SHARED_IDLE_STRATEGY", "spin");
+    std::fs::create_dir_all(dir)?;
+    let driver_ctx = AeronDriverContext::new().map_err(err)?;
+    driver_ctx.set_dir(&cstr(dir)).map_err(err)?;
+    driver_ctx.set_dir_delete_on_start(true).map_err(err)?;
+    let (stop, handle) = AeronDriver::launch_embedded(driver_ctx, false);
+    Ok(DriverGuard {
+        stop,
+        _handle: Box::new(handle),
+    })
 }
 
 pub fn default_bind(mode: Mode) -> String {
@@ -154,22 +223,15 @@ fn offer_blocking(publication: &AeronPublication, msg: &[u8]) -> io::Result<()> 
 // ------------------------------------------------------------------- echo
 
 pub fn echo(mode: Mode, bind: &str, msg_size: usize) -> io::Result<()> {
-    use rusteron_media_driver::{AeronDriver, AeronDriverContext};
-
     assert!(msg_size <= MAX_MSG, "message must fit one fragment");
 
-    // The C driver reads these from the environment at context creation.
-    std::env::set_var("AERON_THREADING_MODE", "SHARED");
-    std::env::set_var("AERON_SHARED_IDLE_STRATEGY", "spin");
-    std::fs::create_dir_all(bind)?;
-    let driver_ctx = AeronDriverContext::new().map_err(err)?;
-    driver_ctx.set_dir(&cstr(bind)).map_err(err)?;
-    driver_ctx.set_dir_delete_on_start(true).map_err(err)?;
-    let (_stop, _driver) = AeronDriver::launch_embedded(driver_ctx.clone(), false);
+    let (dir, ep) = parse_spec(bind);
+    let ep = ep.unwrap_or_else(Endpoints::loopback);
+    let _driver = launch_driver(&dir)?;
 
-    let (_ctx, aeron) = attach_client(bind)?;
-    let subscription = add_subscription(&aeron, &mode.channel("c2s"), STREAM_C2S)?;
-    let publication = add_publication(&aeron, &mode.channel("s2c"), STREAM_S2C)?;
+    let (_ctx, aeron) = attach_client(&dir)?;
+    let subscription = add_subscription(&aeron, &mode.channel("c2s", &ep), STREAM_C2S)?;
+    let publication = add_publication(&aeron, &mode.channel("s2c", &ep), STREAM_S2C)?;
 
     println!("READY {bind}");
     use std::io::Write;
@@ -202,8 +264,23 @@ pub fn connect(
     msg_size: usize,
 ) -> io::Result<(Box<dyn Sender>, Box<dyn Receiver>)> {
     assert!(msg_size <= MAX_MSG, "message must fit one fragment");
-    let (ctx, aeron) = attach_client(addr)?;
-    let publication = add_publication(&aeron, &mode.channel("c2s"), STREAM_C2S)?;
+    let (announced_dir, ep) = parse_spec(addr);
+    // Same host: attach to the echo child's driver. Another host: the
+    // announced dir is a path over there, so run a driver of our own.
+    let (dir, driver) = match &ep {
+        None => (announced_dir, None),
+        Some(_) => {
+            let local = std::env::temp_dir()
+                .join(format!("wire-gauge-{}-aeron-client", std::process::id()))
+                .to_string_lossy()
+                .into_owned();
+            let guard = launch_driver(&local)?;
+            (local, Some(guard))
+        }
+    };
+    let ep = ep.unwrap_or_else(Endpoints::loopback);
+    let (ctx, aeron) = attach_client(&dir)?;
+    let publication = add_publication(&aeron, &mode.channel("c2s", &ep), STREAM_C2S)?;
 
     // The echo side's subscription exists before READY, so this connects
     // fast; offering before it does would silently drop.
@@ -219,10 +296,11 @@ pub fn connect(
         _ctx: ctx,
         _client: aeron,
         publication,
+        _driver: driver,
     };
     let rx = LazyReceiver {
-        dir: addr.to_string(),
-        channel: mode.channel("s2c"),
+        dir,
+        channel: mode.channel("s2c", &ep),
         msg_size,
         inner: None,
     };
@@ -233,6 +311,8 @@ struct AeronSender {
     _ctx: AeronContext,
     _client: Aeron,
     publication: AeronPublication,
+    /// Present only for cross-host runs; stops the local driver on drop.
+    _driver: Option<DriverGuard>,
 }
 
 impl Sender for AeronSender {

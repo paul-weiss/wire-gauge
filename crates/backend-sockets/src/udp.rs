@@ -22,7 +22,8 @@ pub fn echo(bind: &str, msg_size: usize) -> io::Result<()> {
 }
 
 pub fn connect(addr: &str, _msg_size: usize) -> io::Result<(Box<dyn Sender>, Box<dyn Receiver>)> {
-    let tx = UdpSocket::bind("127.0.0.1:0")?;
+    // Any interface: the echo may be on another host (M6).
+    let tx = UdpSocket::bind("0.0.0.0:0")?;
     tx.connect(addr)?;
     let rx = tx.try_clone()?;
     rx.set_read_timeout(Some(DRAIN_TIMEOUT))?;

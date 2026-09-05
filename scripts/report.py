@@ -5,7 +5,7 @@ The report is generated, never hand-typed: every number in it traces to a
 run record. Keeps the newest record per (machine, backend, rate, size);
 charts draw the canonical machine only (primes, hostname 'p').
 
-Usage: scripts/report.py [--machine p] [--out report/wire-gauge-report.html]
+Usage: scripts/report.py [--machine p] [--topology same-host] [--out report/wire-gauge-report.html]
 """
 import glob
 import html
@@ -38,13 +38,15 @@ CLASS_VAR = {
 }
 
 
-def load_latest(machine):
+def load_latest(machine, topology="same-host"):
     latest = {}
     for path in sorted(glob.glob(os.path.join(ROOT, "results", "*.jsonl"))):
         with open(path) as f:
             for line in f:
                 r = json.loads(line)
                 if r["machine"]["hostname"] != machine:
+                    continue
+                if r.get("topology", "same-host") != topology:
                     continue
                 key = (r["backend"], r["config"]["rate"], r["config"]["msg_size"])
                 if key not in latest or r["unix_time_s"] >= latest[key]["unix_time_s"]:
@@ -216,16 +218,19 @@ def results_table(records):
 
 def main():
     machine = "p"
+    topology = "same-host"
     out = os.path.join(ROOT, "report", "wire-gauge-report.html")
     args = sys.argv[1:]
     while args:
         a = args.pop(0)
         if a == "--machine":
             machine = args.pop(0)
+        elif a == "--topology":
+            topology = args.pop(0)
         elif a == "--out":
             out = args.pop(0)
 
-    records = load_latest(machine)
+    records = load_latest(machine, topology)
     if not records:
         sys.exit(f"no records for machine '{machine}' in results/")
 

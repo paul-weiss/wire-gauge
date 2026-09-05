@@ -22,6 +22,11 @@ pub struct RunRecord {
     pub machine: Machine,
     pub backend: String,
     pub scenario: &'static str,
+    /// Where the two ends live: "same-host" (the echo child on this
+    /// machine) or a campaign label such as "aws-same-az" / "aws-cross-az".
+    pub topology: String,
+    /// The announced peer address when the echo ran on another host.
+    pub peer: Option<String>,
     pub config: RttConfigOut,
     pub results: RttResults,
 }
@@ -83,7 +88,13 @@ impl HistSummary {
 }
 
 impl RunRecord {
-    pub fn for_rtt(backend: &str, cfg: &RttConfig, out: &RttOutcome) -> Self {
+    pub fn for_rtt(
+        backend: &str,
+        cfg: &RttConfig,
+        out: &RttOutcome,
+        topology: &str,
+        peer: Option<&str>,
+    ) -> Self {
         Self {
             schema: SCHEMA,
             unix_time_s: SystemTime::now()
@@ -93,6 +104,8 @@ impl RunRecord {
             machine: Machine::detect(),
             backend: backend.to_string(),
             scenario: "rtt-1to1",
+            topology: topology.to_string(),
+            peer: peer.map(str::to_string),
             config: RttConfigOut {
                 rate: cfg.rate,
                 msg_size: cfg.msg_size,

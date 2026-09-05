@@ -29,7 +29,11 @@ pub struct Broker {
 
 impl Broker {
     /// Start the broker a backend needs, or None for brokerless backends.
-    pub fn start_for(backend: &str) -> io::Result<Option<Broker>> {
+    ///
+    /// `advertise` is the address a *remote* client will use to reach this
+    /// broker (M6, cross-host). None keeps everything on loopback.
+    pub fn start_for(backend: &str, advertise: Option<&str>) -> io::Result<Option<Broker>> {
+        let listen_ip = if advertise.is_some() { "0.0.0.0" } else { "127.0.0.1" };
         let (port, ready_timeout) = match backend {
             "nats" | "jetstream" => (NATS_PORT, Duration::from_secs(10)),
             "redis" => (REDIS_PORT, Duration::from_secs(10)),
@@ -43,7 +47,7 @@ impl Broker {
         let mut cmd = match backend {
             "nats" => {
                 let mut c = Command::new(find_bin("nats-server", "WG_NATS_SERVER")?);
-                c.args(["-p", &NATS_PORT.to_string(), "-a", "127.0.0.1"]);
+                c.args(["-p", &NATS_PORT.to_string(), "-a", listen_ip]);
                 c
             }
             "jetstream" => {
@@ -52,7 +56,7 @@ impl Broker {
                     "-p",
                     &NATS_PORT.to_string(),
                     "-a",
-                    "127.0.0.1",
+                    listen_ip,
                     "-js",
                     "-sd",
                 ])
@@ -65,7 +69,9 @@ impl Broker {
                     "--port",
                     &REDIS_PORT.to_string(),
                     "--bind",
-                    "127.0.0.1",
+                    listen_ip,
+                    "--protected-mode",
+                    if advertise.is_some() { "no" } else { "yes" },
                     "--save",
                     "",
                     "--appendonly",
@@ -74,7 +80,7 @@ impl Broker {
                 .current_dir(&work_dir);
                 c
             }
-            "kafka" => kafka_command(&work_dir)?,
+            "kafka" => kafka_command(&work_dir, advertise)?,
             _ => unreachable!(),
         };
 
@@ -129,17 +135,21 @@ impl Drop for Broker {
 /// KRaft single-node kafka: write a properties file, format storage, start.
 /// The format step runs to completion first; the returned command is the
 /// server itself.
-fn kafka_command(work_dir: &Path) -> io::Result<Command> {
+fn kafka_command(work_dir: &Path, advertise: Option<&str>) -> io::Result<Command> {
     let bindir = kafka_bindir()?;
     let props = work_dir.join("server.properties");
+    // Kafka hands clients its advertised address on first contact, so a
+    // remote client needs the host's reachable IP there, not loopback.
+    let listen_ip = if advertise.is_some() { "0.0.0.0" } else { "127.0.0.1" };
+    let advertised = advertise.unwrap_or("127.0.0.1");
     std::fs::write(
         &props,
         format!(
             "process.roles=broker,controller\n\
              node.id=1\n\
              controller.quorum.voters=1@127.0.0.1:{KAFKA_CONTROLLER_PORT}\n\
-             listeners=PLAINTEXT://127.0.0.1:{KAFKA_PORT},CONTROLLER://127.0.0.1:{KAFKA_CONTROLLER_PORT}\n\
-             advertised.listeners=PLAINTEXT://127.0.0.1:{KAFKA_PORT}\n\
+             listeners=PLAINTEXT://{listen_ip}:{KAFKA_PORT},CONTROLLER://127.0.0.1:{KAFKA_CONTROLLER_PORT}\n\
+             advertised.listeners=PLAINTEXT://{advertised}:{KAFKA_PORT}\n\
              controller.listener.names=CONTROLLER\n\
              listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT\n\
              log.dirs={}\n\
