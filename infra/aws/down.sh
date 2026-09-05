@@ -2,6 +2,9 @@
 # Destroy everything tagged Project=wire-gauge: instances first, then the
 # security group, placement group, and key pair. Safe to run repeatedly.
 source "$(dirname "$0")/lib.sh"
+# A hold file keeps the rig alive through a campaign's automatic teardown,
+# for tacking on one more pass. Remove it and run ./down.sh by hand.
+if [ -f "$HERE/.hold" ]; then log "hold file present ($HERE/.hold): NOT tearing down"; exit 0; fi
 IDS=$(aws ec2 describe-instances --filters "Name=tag:Project,Values=$PROJECT" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text)
 if [ -n "$IDS" ]; then

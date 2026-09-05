@@ -1,3 +1,4 @@
 /target
 .DS_Store
 infra/aws/state.json
+infra/aws/.hold

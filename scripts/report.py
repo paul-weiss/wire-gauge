@@ -54,6 +54,151 @@ def load_latest(machine, topology="same-host"):
     return latest
 
 
+def load_topologies(prefix="aws-"):
+    """Newest record per (topology, backend, rate, size) for every topology
+    whose label starts with `prefix`, regardless of machine."""
+    latest = {}
+    for path in sorted(glob.glob(os.path.join(ROOT, "results", "*.jsonl"))):
+        with open(path) as f:
+            for line in f:
+                r = json.loads(line)
+                topo = r.get("topology", "same-host")
+                if not topo.startswith(prefix):
+                    continue
+                key = (topo, r["backend"], r["config"]["rate"], r["config"]["msg_size"])
+                if key not in latest or r["unix_time_s"] >= latest[key]["unix_time_s"]:
+                    latest[key] = r
+    return latest
+
+
+def icmp_floors():
+    """Parse the campaign notes for each topology's ping summary."""
+    floors = {}
+    for path in sorted(glob.glob(os.path.join(ROOT, "results", "aws-*-notes.txt"))):
+        topo = None
+        for line in open(path):
+            if "icmp floor" in line and line.startswith("["):
+                topo = "aws-" + line[1:line.index("]")]
+            elif topo and line.startswith("rtt min/avg/max/mdev"):
+                vals = line.split("=")[1].strip().split()[0].split("/")
+                floors[topo] = tuple(float(v) * 1000 for v in vals)  # µs
+                topo = None
+    return floors
+
+
+def cross_host_html():
+    """Round two: the network transports measured across a real wire. Empty
+    string when no cross-host records exist, so the round-one report is
+    unchanged until a campaign has run."""
+    recs = load_topologies()
+    if not recs:
+        return ""
+    floors = icmp_floors()
+    topos = sorted({k[0] for k in recs}, key=lambda t: (t != "aws-same-az", t))
+    p50 = lambda r: r["results"]["latency_ns"]["p50"]
+    lag99 = lambda r: r["results"]["send_lag_ns"]["p99"]
+
+    def unsaturated(r):
+        # The generator held schedule and the median is not a queue: under
+        # a millisecond of send lag and a median under 10x the wire floor.
+        floor = floors.get(r.get("topology"), (0, 400.0, 0, 0))[1] * 1000
+        return lag99(r) < 1_000_000 and p50(r) < 10 * floor
+
+    parts = []
+    hosts = sorted({r["machine"]["hostname"] for r in recs.values()})
+    total = len(recs)
+    parts.append(
+        f"<p class=\"lede\">The network-axis transports re-measured between separate machines: "
+        f"Amazon EC2 c7i.2xlarge pairs, one pair in a cluster placement group inside a single "
+        f"availability zone, one pair across two zones. Same harness, same schedule-honest generator; "
+        f"the echo process and its broker run on the far host. {total} runs.</p>"
+    )
+    for topo in topos:
+        rows_all = [r for k, r in recs.items() if k[0] == topo]
+        by_backend = {}
+        for r in rows_all:
+            by_backend.setdefault(r["backend"], []).append(r)
+        # Ladder row per backend: its lowest offered rate that stayed unsaturated,
+        # else its lowest rate, flagged.
+        ladder = []
+        for b, rs in by_backend.items():
+            rs = sorted(rs, key=lambda r: r["config"]["rate"])
+            ok = [r for r in rs if unsaturated(r)]
+            ladder.append((ok[0] if ok else rs[0], bool(ok)))
+        ladder.sort(key=lambda t: p50(t[0]))
+        svg, _ = ladder_chart([r for r, _ in ladder])
+        floor = floors.get(topo)
+        floor_txt = (
+            f"ICMP round trip on the same pair: min {us(floor[0] * 1000)}, avg {us(floor[1] * 1000)}, "
+            f"max {us(floor[2] * 1000)}."
+            if floor else ""
+        )
+        label = {"aws-same-az": "Same availability zone, cluster placement group",
+                 "aws-cross-az": "Across availability zones"}.get(topo, topo)
+        sat = [b for b, (_, ok) in zip([r["backend"] for r, _ in ladder], ladder) if not ok]
+        sat_txt = (
+            " Rows marked with their lowest offered rate never ran unsaturated on this pair: "
+            + ", ".join(sat) + "." if sat else ""
+        )
+        parts.append(f"<h3>{html.escape(label)}</h3>")
+        parts.append(svg)
+        parts.append(
+            f"<p class=\"chart-note\">Each backend at the lowest offered rate that stayed unsaturated "
+            f"(generator held schedule, median under ten times the wire floor); hover a row for its "
+            f"rate. {floor_txt}{sat_txt}</p>"
+        )
+        parts.append(f"<div class=\"table-wrap\">{results_table({(k[1], k[2], k[3]): r for k, r in recs.items() if k[0] == topo})}</div>")
+
+    # The ceiling finding, computed from the records.
+    def rec(topo, b, rate):
+        return recs.get((topo, b, rate, 128))
+    f = []
+    sa_tcp50, sa_aud50, sa_udp50 = rec("aws-same-az", "tcp", 50000), rec("aws-same-az", "aeron-udp", 50000), rec("aws-same-az", "udp", 50000)
+    sa_aud5, sa_tcp5 = rec("aws-same-az", "aeron-udp", 5000), rec("aws-same-az", "tcp", 5000)
+    if sa_tcp50 and sa_aud50 and sa_udp50:
+        f.append(
+            f"<strong>Across a real wire the raw transports converge.</strong> At 50k/s in one availability "
+            f"zone, TCP ({us(p50(sa_tcp50))}), UDP ({us(p50(sa_udp50))}) and Aeron UDP ({us(p50(sa_aud50))}) "
+            f"sit within a few microseconds of each other at the median: the virtual NIC and the hypervisor's "
+            f"interrupt path are the cost, not the protocol. Aeron still owns the tail (p99 "
+            f"{us(sa_aud50['results']['latency_ns']['p99'])} against TCP's {us(sa_tcp50['results']['latency_ns']['p99'])})."
+        )
+    if sa_aud5 and sa_tcp5:
+        f.append(
+            f"<strong>At low rate the busy-poll receiver is the difference.</strong> At 5k/s Aeron UDP holds "
+            f"{us(p50(sa_aud5))} while TCP pays {us(p50(sa_tcp5))}: a socket that sleeps between messages "
+            f"pays a wakeup on every one, a spinning media driver does not. The same spread vanishes at "
+            f"50k/s, where the socket never gets to sleep."
+        )
+    sa_redis5, sa_nats50 = rec("aws-same-az", "redis", 5000), rec("aws-same-az", "nats", 50000)
+    if sa_redis5 and sa_nats50 and "aws-same-az" in floors:
+        rtt = floors["aws-same-az"][1]
+        f.append(
+            f"<strong>A synchronous client cannot exceed one message per round trip, and the wire sets the "
+            f"round trip.</strong> The Redis and NATS clients here confirm each message before sending the "
+            f"next (XADD reply; publish + flush). On loopback that cost 25 µs and was invisible. At a "
+            f"{us(rtt * 1000)} wire it caps throughput near {1_000_000 / rtt:,.0f} msgs/s, so an offered "
+            f"5k/s to Redis turned into {us(p50(sa_redis5))} of queue, and NATS at 50k/s into "
+            f"{us(p50(sa_nats50))}. Kafka's pipelined producer and Aeron's driver never hit this wall. "
+            f"Round two's lower rates exist to measure these systems under the ceiling; the saturated rows "
+            f"stay in the table because they are the honest record of what a request-response client does "
+            f"when the wire gets long."
+        )
+    xa_aud50, xa_tcp50 = rec("aws-cross-az", "aeron-udp", 50000), rec("aws-cross-az", "tcp", 50000)
+    if xa_aud50 and xa_tcp50 and "aws-cross-az" in floors and "aws-same-az" in floors:
+        f.append(
+            f"<strong>Crossing an availability zone adds about {us((floors['aws-cross-az'][1] - floors['aws-same-az'][1]) * 1000)} "
+            f"and tightens nothing.</strong> Aeron UDP at 50k/s across zones: p50 {us(p50(xa_aud50))}, "
+            f"p99 {us(xa_aud50['results']['latency_ns']['p99'])}, zero drops. TCP: p50 {us(p50(xa_tcp50))}, "
+            f"p99 {us(xa_tcp50['results']['latency_ns']['p99'])}. Distance moves the whole distribution; "
+            f"it does not widen the fast transports' tails."
+        )
+    if f:
+        parts.append("<h3>What the wire changes</h3>")
+        parts.extend(f"<p>{x}</p>" for x in f)
+    return "".join(parts)
+
+
 def us(ns, digits=2):
     """Format nanoseconds with an adaptive unit."""
     v = ns / 1000.0
@@ -259,6 +404,7 @@ def main():
 
     ladder_svg, _ = ladder_chart(ladder_rows)
     dumbbell_svg, _ = dumbbell_chart(pairs)
+    cross_host = cross_host_html()
 
     def rec(backend, rate):
         return records.get((backend, rate, 128))
@@ -387,7 +533,7 @@ and saturation becomes queueing delay the schedule-honest harness can see. <span
 <td>NATS core: ~40µs, no persistence to configure, and the simplest operational story here.</td></tr>
 </table>"""
 
-    doc = f"""<title>Wire-Gauge Round One</title>
+    doc = f"""<title>Wire-Gauge</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -452,13 +598,13 @@ footer {{ margin-top: 48px; font-size: 12.5px; color: var(--text-secondary); bor
 strong {{ font-weight: 600; }}
 </style>
 <main>
-<h1>Wire-Gauge Round One</h1>
+<h1>Wire-Gauge</h1>
 <p class="meta">{html.escape(m["cpu"])} · {html.escape(m["os"])} {html.escape(m["kernel"])} · pinned cores ·
 {total_runs} runs · {total_msgs:,} messages · {total_drops} dropped · latest run {date}</p>
 <p class="lede">Round-trip latency of {len(ladder_rows)} message transports under an identical,
 coordinated-omission-free workload: fixed-size {ladder_rows[0]["config"]["msg_size"]}B messages offered on a
 strict schedule, latency measured from <em>intended</em> send time, sends never gated on responses.
-Same harness, same machine, one echo process per run.</p>
+Same harness, same machine, one echo process per run. Round one is this machine alone; round two, below the findings, is the network transports across a real wire.</p>
 
 <h2>The candidates</h2>
 {candidates}
@@ -481,6 +627,7 @@ saturates below the offered rate turns queueing delay into latency.</p>
 
 <h2>Findings</h2>
 {findings_html}
+{("<h2>Round two: across the wire</h2>" + cross_host) if cross_host else ""}
 
 <h2>Which transport for which job</h2>
 <div class="table-wrap" id="jobs">{jobs}</div>
