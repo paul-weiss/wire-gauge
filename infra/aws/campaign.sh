@@ -17,7 +17,10 @@ A_PUB=$(state "['hosts']['a']['pub']"); A_PRIV=$(state "['hosts']['a']['priv']")
 ECHO_LOG=$(mktemp -d)
 
 port_for() { case "$1" in tcp) echo 15001;; udp) echo 15002;; nats|jetstream) echo 14222;; redis) echo 16379;; kafka) echo 19092;; esac; }
-echo_sweep() { ssh_ "$SSH_USER@$1" 'pkill -f "wire-gauge-bin echo" ; pkill -f nats-server ; pkill -f redis-server ; pkill -f kafka.Kafka ; rm -rf /tmp/wire-gauge-* ; true' >/dev/null 2>&1; }
+# The bracket trick keeps pkill -f from matching the remote shell running
+# this very command line (which would kill the ssh session and, under set -e,
+# the campaign). Never let a sweep failure abort the run.
+echo_sweep() { ssh_ "$SSH_USER@$1" 'pkill -f "wire-gauge-bin ech[o]" ; pkill -f "nats-serve[r]" ; pkill -f "redis-serve[r]" ; pkill -f "kafka.Kafk[a]" ; rm -rf /tmp/wire-gauge-* ; true' >/dev/null 2>&1 || true; }
 
 {
   echo "wire-gauge M6 campaign $DATE, instance type $INSTANCE_TYPE"
@@ -42,7 +45,7 @@ for topo in $TOPOS; do
       ssh_ "$SSH_USER@$E_PUB" "taskset -c 0-3 ./wire-gauge-bin echo $b --bind '$BIND' --size 128 $BROKER" > "$OUTF" 2> "$OUTF.err" &
       SSHPID=$!
       READY=""; for i in $(seq 1 240); do READY=$(grep -m1 '^READY ' "$OUTF" | cut -d' ' -f2- || true); [ -n "$READY" ] && break; kill -0 $SSHPID 2>/dev/null || break; sleep 0.5; done
-      if [ -z "$READY" ]; then log "!! $topo $b: echo never announced READY"; tail -5 "$OUTF.err" >&2; kill $SSHPID 2>/dev/null; echo_sweep "$E_PUB"; continue; fi
+      if [ -z "$READY" ]; then log "!! $topo $b: echo never announced READY"; tail -5 "$OUTF.err" >&2; kill $SSHPID 2>/dev/null || true; echo_sweep "$E_PUB"; continue; fi
       log "$topo $b @ $rate/s  (peer $READY)"
       LINE=$(ssh_ "$SSH_USER@$A_PUB" "cd wire-gauge && taskset -c 0-3 ./target/release/wire-gauge rtt $b --peer '$READY' --topology aws-$topo --rate $rate --size 128 --duration 10 --warmup 2 2>/tmp/rtt.err; tail -2 /tmp/rtt.err >&2" | tail -1 || true)
       if [ -n "$LINE" ] && printf '%s' "$LINE" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null; then
@@ -51,7 +54,7 @@ for topo in $TOPOS; do
       else
         log "!! $topo $b @ $rate: no record"
       fi
-      kill $SSHPID 2>/dev/null; wait $SSHPID 2>/dev/null || true
+      kill $SSHPID 2>/dev/null || true; wait $SSHPID 2>/dev/null || true
       echo_sweep "$E_PUB"
     done
   done
