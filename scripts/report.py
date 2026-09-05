@@ -159,8 +159,9 @@ def cross_host_html():
         f.append(
             f"<strong>Across a real wire the raw transports converge.</strong> At 50k/s in one availability "
             f"zone, TCP ({us(p50(sa_tcp50))}), UDP ({us(p50(sa_udp50))}) and Aeron UDP ({us(p50(sa_aud50))}) "
-            f"sit within a few microseconds of each other at the median: the virtual NIC and the hypervisor's "
-            f"interrupt path are the cost, not the protocol. Aeron still owns the tail (p99 "
+            f"sit within a few microseconds of each other at the median, and all of them run far under the "
+            f"idle ICMP round trip on the same pair: a virtual NIC coalesces interrupts when the link is quiet, "
+            f"and ping is always quiet. Aeron still owns the tail (p99 "
             f"{us(sa_aud50['results']['latency_ns']['p99'])} against TCP's {us(sa_tcp50['results']['latency_ns']['p99'])})."
         )
     if sa_aud5 and sa_tcp5:

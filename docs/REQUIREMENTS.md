@@ -303,9 +303,25 @@ echo peer on the second host and passing its address instead of spawning.
   `python3 scripts/report.py`. Published as a private artifact:
   https://claude.ai/code/artifact/4b013200-0182-4dc5-8bd0-f249a7454034
   (republish after regenerating).
-- **M6 — cross-host on AWS.** Two EC2 boxes in a cluster placement group,
-  the network-axis candidates re-measured over a real wire. See "Rigs".
-  Needs Paul: the `wire-gauge-bench` IAM identity.
+- **M6 — cross-host on AWS. Done 2026-09-05.** Three c7i.2xlarge (a client
+  and b echo in a cluster placement group in us-east-1a, c echo in
+  us-east-1b), Ubuntu 24.04, created, provisioned, measured and destroyed by
+  `infra/aws/` in one afternoon; total instance time about 55 minutes each,
+  under two dollars. Runner grew `echo --broker` and `rtt --peer/--topology`;
+  aeron-udp grew explicit `c2s`/`s2c` endpoints and a client-side embedded
+  driver. 48 records in `results/aws-20260905.jsonl`. Findings in the README
+  and the report's "Round two" section. The ones worth remembering: the
+  `ping` floor (0.46 ms same-AZ) is an *idle* floor, every raw transport
+  measured 86 µs at 50k/s; busy-poll is the low-rate differentiator (aeron-udp
+  83 µs vs tcp 262 µs at 5k/s); synchronous clients cap at 1/RTT and the
+  Redis and NATS backends are synchronous, so their cross-host rows needed
+  500 to 2,000 msg/s to stay unsaturated; cross-AZ adds ~0.9 ms and does not
+  widen tails; NATS core dropped 50,617 messages at 50k/s cross-AZ, the
+  study's first drops. Provisioning papercuts, all in `remote-setup.sh`:
+  bindgen needs clang headers, rusteron's build needs rustfmt, Aeron's static
+  link needs libbsd. Campaign papercut: `pkill -f` matching its own ssh
+  command line. Not done: the replicated-broker row (still one node per
+  broker), and pipelined Redis/NATS clients.
 
 ## Repo conventions
 

@@ -1,0 +1,7 @@
+wire-gauge M6 campaign 20260905, instance type c7i.2xlarge
+a (client): 172.31.2.166 us-east-1a
+cross-az echo host c: 172.31.23.92 us-east-1b
+
+[cross-az] icmp floor, a -> c:
+20 packets transmitted, 20 received, 0% packet loss, time 3817ms
+rtt min/avg/max/mdev = 1.286/1.422/1.624/0.079 ms
