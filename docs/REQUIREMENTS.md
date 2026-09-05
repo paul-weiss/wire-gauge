@@ -309,12 +309,8 @@ echo peer on the second host and passing its address instead of spawning.
 
 ## Repo conventions
 
-- **Local-only for now** — Paul creates the GitHub repo later (public vs
-  private undecided). Until it exists, this directory lives on the laptop
-  alone: it is not on GitHub **and not in the backup INCLUDE list**, the same
-  exposure `meeting-facts` has. Flag this whenever the work grows past
-  throwaway size.
-- Trunk is `main`. While the repo is local-only there are no PRs; commit to
-  `main` with the usual prose commit messages. Adopt the feature-branch + PR
-  convention when the GitHub repo appears.
+- **Public on GitHub since 2026-09-05:** `paul-weiss/wire-gauge`. GitHub is
+  the backup; nothing here needs the rsync INCLUDE list.
+- Trunk is `main`. Commit straight to `main` with prose commit messages
+  (Paul, 2026-09-05: "check everything into main for now").
 - `results/` is versioned deliberately — runs are the product.
