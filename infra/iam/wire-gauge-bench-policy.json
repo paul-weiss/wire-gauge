@@ -4,45 +4,80 @@
     {
       "Sid": "ReadOnlyEverywhereInRegion",
       "Effect": "Allow",
-      "Action": ["ec2:Describe*", "pricing:GetProducts", "sts:GetCallerIdentity"],
+      "Action": [
+        "ec2:Describe*",
+        "pricing:GetProducts",
+        "sts:GetCallerIdentity"
+      ],
       "Resource": "*"
     },
     {
       "Sid": "LaunchOnlyInUsEast1",
       "Effect": "Allow",
-      "Action": ["ec2:RunInstances"],
+      "Action": [
+        "ec2:RunInstances"
+      ],
       "Resource": "*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
     },
     {
       "Sid": "TagWhatWeCreate",
       "Effect": "Allow",
-      "Action": ["ec2:CreateTags"],
+      "Action": [
+        "ec2:CreateTags"
+      ],
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "ec2:CreateAction": ["RunInstances", "CreatePlacementGroup", "CreateSecurityGroup", "CreateVolume"]
+          "ec2:CreateAction": [
+            "RunInstances",
+            "CreatePlacementGroup",
+            "CreateSecurityGroup",
+            "CreateVolume",
+            "ImportKeyPair"
+          ]
         }
       }
     },
     {
       "Sid": "ManageOnlyOurOwnInstances",
       "Effect": "Allow",
-      "Action": ["ec2:TerminateInstances", "ec2:StopInstances", "ec2:StartInstances", "ec2:RebootInstances"],
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StopInstances",
+        "ec2:StartInstances",
+        "ec2:RebootInstances"
+      ],
       "Resource": "arn:aws:ec2:us-east-1:106103710708:instance/*",
-      "Condition": { "StringEquals": { "ec2:ResourceTag/Project": "wire-gauge" } }
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Project": "wire-gauge"
+        }
+      }
     },
     {
       "Sid": "EphemeralSupportingResources",
       "Effect": "Allow",
       "Action": [
-        "ec2:CreatePlacementGroup", "ec2:DeletePlacementGroup",
-        "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
-        "ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress",
-        "ec2:ImportKeyPair", "ec2:DeleteKeyPair"
+        "ec2:CreatePlacementGroup",
+        "ec2:DeletePlacementGroup",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:ImportKeyPair",
+        "ec2:DeleteKeyPair"
       ],
       "Resource": "*",
-      "Condition": { "StringEquals": { "aws:RequestedRegion": "us-east-1" } }
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
     }
   ]
 }
