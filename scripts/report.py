@@ -128,6 +128,16 @@ def cross_host_html():
         ladder.sort(key=lambda t: p50(t[0]))
         svg, _ = ladder_chart([r for r, _ in ladder])
         floor = floors.get(topo)
+        write_chart(
+            f"round2-{topo.replace('aws-', '')}-ladder",
+            svg,
+            (
+                {"aws-same-az": "Across the wire, same availability zone (cluster placement group)",
+                 "aws-cross-az": "Across the wire, across availability zones"}.get(topo, topo),
+                "Round trip, p50 → p99 → p99.9, log scale; each backend at its lowest unsaturated offered rate"
+                + (f"; ICMP floor avg {us(floor[1] * 1000)}" if floor else ""),
+            ),
+        )
         floor_txt = (
             f"ICMP round trip on the same pair: min {us(floor[0] * 1000)}, avg {us(floor[1] * 1000)}, "
             f"max {us(floor[2] * 1000)}."
@@ -198,6 +208,57 @@ def cross_host_html():
         parts.append("<h3>What the wire changes</h3>")
         parts.extend(f"<p>{x}</p>" for x in f)
     return "".join(parts)
+
+
+PALETTES = {
+    "light": {"--surface-1": "#fcfcfb", "--line": "#dddbd4", "--text-primary": "#0b0b0b",
+              "--text-secondary": "#52514e", "--series-1": "#2a78d6", "--series-2": "#eb6834",
+              "--series-3": "#1baf7a"},
+    "dark": {"--surface-1": "#1a1a19", "--line": "#3a3936", "--text-primary": "#ffffff",
+             "--text-secondary": "#c3c2b7", "--series-1": "#3987e5", "--series-2": "#d95926",
+             "--series-3": "#199e70"},
+}
+
+
+def standalone_svg(svg, theme, title):
+    """Make a chart SVG self-contained for the README: concrete colours in
+    place of CSS variables, its own <style>, a background, and a title."""
+    pal = PALETTES[theme]
+    for var, colour in pal.items():
+        svg = svg.replace(f"var({var})", colour)
+    style = (
+        "<style>"
+        f".grid{{stroke:{pal['--line']};stroke-width:1}}"
+        f".axis{{fill:{pal['--text-secondary']};font:11px 'IBM Plex Mono',ui-monospace,Menlo,monospace}}"
+        f".rowlabel{{fill:{pal['--text-primary']};font:12.5px 'IBM Plex Mono',ui-monospace,Menlo,monospace}}"
+        f".value{{fill:{pal['--text-secondary']};font:11px 'IBM Plex Mono',ui-monospace,Menlo,monospace}}"
+        f".title{{fill:{pal['--text-primary']};font:600 14px 'IBM Plex Sans',system-ui,sans-serif}}"
+        f".sub{{fill:{pal['--text-secondary']};font:11.5px 'IBM Plex Sans',system-ui,sans-serif}}"
+        "</style>"
+    )
+    # Grow the viewBox by a title band at the top.
+    head, rest = svg.split(">", 1)
+    vb = head.split('viewBox="')[1].split('"')[0].split()
+    w, h = float(vb[2]), float(vb[3])
+    band = 44
+    head = head.replace(f'viewBox="{vb[0]} {vb[1]} {vb[2]} {vb[3]}"', f'viewBox="0 0 {w:g} {h + band:g}"')
+    head += f' xmlns="http://www.w3.org/2000/svg" width="{w:g}" height="{h + band:g}"'
+    title_txt, sub_txt = title
+    body = (
+        f'<rect width="{w:g}" height="{h + band:g}" fill="{pal["--surface-1"]}" rx="8"/>'
+        f'<text class="title" x="16" y="20">{html.escape(title_txt)}</text>'
+        f'<text class="sub" x="16" y="36">{html.escape(sub_txt)}</text>'
+        f'<g transform="translate(0 {band})">{rest.rsplit("</svg>", 1)[0]}</g>'
+    )
+    return f"{head}>{style}{body}</svg>"
+
+
+def write_chart(name, svg, title):
+    out_dir = os.path.join(ROOT, "report", "charts")
+    os.makedirs(out_dir, exist_ok=True)
+    for theme in ("light", "dark"):
+        with open(os.path.join(out_dir, f"{name}-{theme}.svg"), "w") as f:
+            f.write(standalone_svg(svg, theme, title))
 
 
 def us(ns, digits=2):
@@ -405,6 +466,16 @@ def main():
 
     ladder_svg, _ = ladder_chart(ladder_rows)
     dumbbell_svg, _ = dumbbell_chart(pairs)
+    write_chart(
+        "round1-ladder",
+        ladder_svg,
+        ("Same host, eleven transports", f"Round trip at {rate_label(low_rate)}, p50 → p99 → p99.9, log scale; pinned cores, zero drops"),
+    )
+    write_chart(
+        "round1-load",
+        dumbbell_svg,
+        ("What load does to the median", f"p50 at {rate_label(low_rate)} (hollow) versus each backend's highest tested rate (filled)"),
+    )
     cross_host = cross_host_html()
 
     def rec(backend, rate):

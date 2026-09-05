@@ -12,6 +12,11 @@ hand-typed.
 
 ## Round 1 results
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="report/charts/round1-ladder-dark.svg">
+  <img alt="Round-trip latency ladder for eleven transports on one machine: p50 to p99 to p99.9 on a log scale" src="report/charts/round1-ladder-light.svg" width="960">
+</picture>
+
 Eleven transports, one machine, one methodology. Round-trip latency in
 microseconds at 5,000 messages per second, 128-byte payloads, pinned to
 isolated P-cores on Linux. Zero drops in every run.
@@ -32,6 +37,12 @@ isolated P-cores on Linux. Zero drops in every run.
 
 `python3 scripts/table.py` prints every run, including the 50,000 and
 100,000 messages-per-second campaigns and the p99.99 and max columns.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="report/charts/round1-load-dark.svg">
+  <img alt="Median latency at the low rate versus each backend's highest tested rate; Kafka's median rises 2,000 times at 50,000 messages per second" src="report/charts/round1-load-light.svg" width="960">
+</picture>
+
 
 ### Findings worth keeping
 
@@ -67,6 +78,16 @@ Amazon EC2 c7i.2xlarge, Ubuntu 24.04, one pair in a cluster placement group
 inside a single availability zone, one pair across two zones. Same harness,
 same schedule-honest generator, echo process and broker on the far host,
 both ends pinned to four physical cores. 48 runs.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="report/charts/round2-same-az-ladder-dark.svg">
+  <img alt="Cross-host latency ladder, same availability zone" src="report/charts/round2-same-az-ladder-light.svg" width="960">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="report/charts/round2-cross-az-ladder-dark.svg">
+  <img alt="Cross-host latency ladder, across availability zones" src="report/charts/round2-cross-az-ladder-light.svg" width="960">
+</picture>
 
 Round-trip medians in microseconds, 128-byte payloads. For the brokered
 systems the rate shown is the lowest offered rate at which the client stayed
@@ -192,7 +213,8 @@ crates/runner          the wire-gauge binary: rtt scenario, echo peer,
                        broker lifecycle
 results/               every canonical run, versioned; runs are the product
 infra/                 the AWS rig (up, provision, campaign, down) and its IAM policy
-report/                generated HTML report (light and dark), never edited
+report/                generated HTML report (light and dark), never edited;
+                       charts/ holds the same charts as standalone SVGs for this README
 scripts/               smoke.sh, table.py, report.py
 docs/REQUIREMENTS.md   plan of record
 ```
